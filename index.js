@@ -66,6 +66,21 @@ app.post('/register', async (req, res) => {
   }
 });
 
+// NEW: Get claimed blocks for a driver
+app.get('/claims', async (req, res) => {
+  const { driver_id } = req.query;  // Get driver_id from query string
+  try {
+    const result = await pool.query(
+      'SELECT * FROM block_claims WHERE driver_id = $1',
+      [driver_id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Database error fetching claims' });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
