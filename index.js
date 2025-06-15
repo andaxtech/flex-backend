@@ -1,11 +1,13 @@
 const express = require('express');
 const cors = require('cors');
-const bcrypt = require('bcrypt'); // Added for password hashing
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 require('dotenv').config();
 const pool = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const JWT_SECRET = process.env.JWT_SECRET || 'change_this_to_secret';
 
 app.use(cors());
 app.use(express.json());
@@ -52,7 +54,7 @@ app.get('/drivers', async (req, res) => {
   }
 });
 
-// Register user only (existing route)
+// Register user only
 app.post('/register', async (req, res) => {
   const { username, password_hash, email } = req.body;
   try {
@@ -82,7 +84,7 @@ app.get('/claims', async (req, res) => {
   }
 });
 
-// NEW: Sign up a driver and create user login
+// Sign up driver + user
 app.post('/signup-driver', async (req, res) => {
   const {
     username,
@@ -117,6 +119,27 @@ app.post('/signup-driver', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Signup failed' });
+  }
+});
+
+// Login route
+app.post('/login', async (req, res) => {
+  const { username, password } = req.body;
+  try {
+    const userRes = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
+    if (userRes.rows.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
+
+    const user = userRes.rows[0];
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+
+    const payload = { user_id: user.user_id };
+    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '1h' });
+
+    res.json({ token });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Login failed' });
   }
 });
 
