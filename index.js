@@ -12,12 +12,10 @@ const JWT_SECRET = process.env.JWT_SECRET || 'change_this_to_secret';
 app.use(cors());
 app.use(express.json());
 
-// Test route
 app.get('/', (req, res) => {
   res.send('Flex Backend is Running with Updated DB!');
 });
 
-// Get available blocks
 app.get('/blocks', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM blocks WHERE status = $1', ['available']);
@@ -28,7 +26,6 @@ app.get('/blocks', async (req, res) => {
   }
 });
 
-// Claim a block
 app.post('/claim', async (req, res) => {
   const { block_id, driver_id } = req.body;
   try {
@@ -43,7 +40,6 @@ app.post('/claim', async (req, res) => {
   }
 });
 
-// Get all drivers
 app.get('/drivers', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM drivers WHERE status = $1', ['active']);
@@ -54,7 +50,6 @@ app.get('/drivers', async (req, res) => {
   }
 });
 
-// Register user only
 app.post('/register', async (req, res) => {
   const { username, password_hash, email } = req.body;
   try {
@@ -69,7 +64,6 @@ app.post('/register', async (req, res) => {
   }
 });
 
-// Get claimed blocks
 app.get('/claims', async (req, res) => {
   const { driver_id } = req.query;
   try {
@@ -84,40 +78,41 @@ app.get('/claims', async (req, res) => {
   }
 });
 
-// SIGNUP DRIVER (with transaction)
 app.post('/signup-driver', async (req, res) => {
   const client = await pool.connect();
-  const {
-    username,
-    password,
-    email,
-    first_name,
-    last_name,
-    phone_number,
-    birth_date,
-    license_number,
-    license_expiration,
-    car_make,
-    car_model,
-    car_year,
-    car_color,
-    license_plate,
-    vin_number,
-    insurance_provider,
-    insurance_policy_number,
-    policy_start_date,
-    policy_end_date,
-    account_holder_first_name,
-    account_holder_last_name,
-    bank_name,
-    bank_account_number,
-    routing_number
-  } = req.body;
-
   try {
     await client.query('BEGIN');
 
-    const password_hash = await bcrypt.hash(password, 10);
+    const {
+      username,
+      password,
+      email,
+      first_name,
+      last_name,
+      phone_number,
+      birth_date,
+      license_number,
+      license_expiration,
+      car_make,
+      car_model,
+      car_year,
+      car_color,
+      license_plate,
+      vin_number,
+      insurance_provider,
+      insurance_policy_number,
+      policy_start_date,
+      policy_end_date,
+      insurance_expiration,
+      account_holder_first_name,
+      account_holder_last_name,
+      bank_name,
+      bank_account_number,
+      routing_number
+    } = req.body;
+
+    const saltRounds = 10;
+    const password_hash = await bcrypt.hash(password, saltRounds);
 
     const userResult = await client.query(
       'INSERT INTO users (username, password_hash, email) VALUES ($1, $2, $3) RETURNING user_id',
@@ -135,9 +130,9 @@ app.post('/signup-driver', async (req, res) => {
 
     await client.query(
       `INSERT INTO car_details 
-        (driver_id, make, model, year, color, license_plate, vin_number) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [driver_id, car_make, car_model, car_year, car_color, license_plate, vin_number]
+        (driver_id, make, model, year, color, license_plate, vin_number, insurance_expiration) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [driver_id, car_make, car_model, car_year, car_color, license_plate, vin_number, insurance_expiration]
     );
 
     await client.query(
@@ -165,7 +160,6 @@ app.post('/signup-driver', async (req, res) => {
   }
 });
 
-// LOGIN
 app.post('/login', async (req, res) => {
   const { username, password } = req.body;
   try {
