@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const bcrypt = require('bcrypt'); // Added for password hashing
 require('dotenv').config();
 const pool = require('./db');
 
@@ -14,7 +15,7 @@ app.get('/', (req, res) => {
   res.send('Flex Backend is Running with Updated DB!');
 });
 
-// Get all available blocks (from the 'blocks' table)
+// Get all available blocks
 app.get('/blocks', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM blocks WHERE status = $1', ['available']);
@@ -25,7 +26,7 @@ app.get('/blocks', async (req, res) => {
   }
 });
 
-// Claim a block (insert into 'block_claims')
+// Claim a block
 app.post('/claim', async (req, res) => {
   const { block_id, driver_id } = req.body;
   try {
@@ -40,7 +41,7 @@ app.post('/claim', async (req, res) => {
   }
 });
 
-// Get all drivers (from 'drivers' table)
+// Get all drivers
 app.get('/drivers', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM drivers WHERE status = $1', ['active']);
@@ -51,7 +52,7 @@ app.get('/drivers', async (req, res) => {
   }
 });
 
-// User registration (insert into 'users')
+// Register user only (existing route)
 app.post('/register', async (req, res) => {
   const { username, password_hash, email } = req.body;
   try {
@@ -66,9 +67,9 @@ app.post('/register', async (req, res) => {
   }
 });
 
-// NEW: Get claimed blocks for a driver
+// Get claimed blocks for a driver
 app.get('/claims', async (req, res) => {
-  const { driver_id } = req.query;  // Get driver_id from query string
+  const { driver_id } = req.query;
   try {
     const result = await pool.query(
       'SELECT * FROM block_claims WHERE driver_id = $1',
@@ -78,6 +79,44 @@ app.get('/claims', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Database error fetching claims' });
+  }
+});
+
+// NEW: Sign up a driver and create user login
+app.post('/signup-driver', async (req, res) => {
+  const {
+    username,
+    password,
+    email,
+    first_name,
+    last_name,
+    phone_number,
+    license_number,
+    license_expiration,
+    birth_date
+  } = req.body;
+
+  try {
+    const saltRounds = 10;
+    const password_hash = await bcrypt.hash(password, saltRounds);
+
+    const userResult = await pool.query(
+      'INSERT INTO users (username, password_hash, email) VALUES ($1, $2, $3) RETURNING user_id',
+      [username, password_hash, email]
+    );
+    const user_id = userResult.rows[0].user_id;
+
+    const driverResult = await pool.query(
+      `INSERT INTO drivers 
+        (user_id, first_name, last_name, phone_number, email, license_number, license_expiration, birth_date, registration_date, status) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9) RETURNING *`,
+      [user_id, first_name, last_name, phone_number, email, license_number, license_expiration, birth_date, 'pending']
+    );
+
+    res.status(201).json(driverResult.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Signup failed' });
   }
 });
 
