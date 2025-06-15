@@ -12,12 +12,12 @@ const JWT_SECRET = process.env.JWT_SECRET || 'change_this_to_secret';
 app.use(cors());
 app.use(express.json());
 
-// Test route
+// Health check
 app.get('/', (req, res) => {
-  res.send('Flex Backend is Running with Updated DB!');
+  res.send('Flex Backend is Running with Full Signup Integration!');
 });
 
-// Get all available blocks
+// Get available blocks
 app.get('/blocks', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM blocks WHERE status = $1', ['available']);
@@ -43,7 +43,7 @@ app.post('/claim', async (req, res) => {
   }
 });
 
-// Get all drivers
+// Get all active drivers
 app.get('/drivers', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM drivers WHERE status = $1', ['active']);
@@ -54,7 +54,7 @@ app.get('/drivers', async (req, res) => {
   }
 });
 
-// Register user only
+// Manual user registration
 app.post('/register', async (req, res) => {
   const { username, password_hash, email } = req.body;
   try {
@@ -69,7 +69,7 @@ app.post('/register', async (req, res) => {
   }
 });
 
-// Get claimed blocks for a driver
+// Get all claimed blocks for driver
 app.get('/claims', async (req, res) => {
   const { driver_id } = req.query;
   try {
@@ -84,7 +84,7 @@ app.get('/claims', async (req, res) => {
   }
 });
 
-// Sign up driver + user
+// Main signup route
 app.post('/signup-driver', async (req, res) => {
   const {
     username,
@@ -93,9 +93,24 @@ app.post('/signup-driver', async (req, res) => {
     first_name,
     last_name,
     phone_number,
+    birth_date,
     license_number,
     license_expiration,
-    birth_date
+    car_make,
+    car_model,
+    car_year,
+    car_color,
+    license_plate,
+    vin_number,
+    insurance_provider,
+    insurance_policy_number,
+    policy_start_date,
+    policy_end_date,
+    account_holder_first_name,
+    account_holder_last_name,
+    bank_name,
+    bank_account_number,
+    routing_number
   } = req.body;
 
   try {
@@ -111,18 +126,40 @@ app.post('/signup-driver', async (req, res) => {
     const driverResult = await pool.query(
       `INSERT INTO drivers 
         (user_id, first_name, last_name, phone_number, email, license_number, license_expiration, birth_date, registration_date, status) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9) RETURNING *`,
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9) RETURNING driver_id`,
       [user_id, first_name, last_name, phone_number, email, license_number, license_expiration, birth_date, 'pending']
     );
+    const driver_id = driverResult.rows[0].driver_id;
 
-    res.status(201).json(driverResult.rows[0]);
+    await pool.query(
+      `INSERT INTO car_details 
+        (driver_id, make, model, year, color, license_plate, vin_number) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [driver_id, car_make, car_model, car_year, car_color, license_plate, vin_number]
+    );
+
+    await pool.query(
+      `INSERT INTO insurance_details 
+        (driver_id, provider, policy_number, start_date, end_date) 
+        VALUES ($1, $2, $3, $4, $5)`,
+      [driver_id, insurance_provider, insurance_policy_number, policy_start_date, policy_end_date]
+    );
+
+    await pool.query(
+      `INSERT INTO driver_banking_info 
+        (driver_id, account_holder_first_name, account_holder_last_name, bank_name, account_number, routing_number) 
+        VALUES ($1, $2, $3, $4, $5, $6)`,
+      [driver_id, account_holder_first_name, account_holder_last_name, bank_name, bank_account_number, routing_number]
+    );
+
+    res.status(201).json({ message: 'Driver registration complete and will be reviewed' });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Signup failed' });
   }
 });
 
-// Login route
+// Login
 app.post('/login', async (req, res) => {
   const { username, password } = req.body;
   try {
