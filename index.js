@@ -12,10 +12,12 @@ const JWT_SECRET = process.env.JWT_SECRET || 'change_this_to_secret';
 app.use(cors());
 app.use(express.json());
 
+// Test route
 app.get('/', (req, res) => {
   res.send('Flex Backend is Running with Updated DB!');
 });
 
+// Get available blocks
 app.get('/blocks', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM blocks WHERE status = $1', ['available']);
@@ -26,6 +28,7 @@ app.get('/blocks', async (req, res) => {
   }
 });
 
+// Claim a block
 app.post('/claim', async (req, res) => {
   const { block_id, driver_id } = req.body;
   try {
@@ -40,6 +43,7 @@ app.post('/claim', async (req, res) => {
   }
 });
 
+// Get all drivers
 app.get('/drivers', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM drivers WHERE status = $1', ['active']);
@@ -50,6 +54,7 @@ app.get('/drivers', async (req, res) => {
   }
 });
 
+// Register user only
 app.post('/register', async (req, res) => {
   const { username, password_hash, email } = req.body;
   try {
@@ -64,6 +69,7 @@ app.post('/register', async (req, res) => {
   }
 });
 
+// Get claimed blocks
 app.get('/claims', async (req, res) => {
   const { driver_id } = req.query;
   try {
@@ -78,6 +84,7 @@ app.get('/claims', async (req, res) => {
   }
 });
 
+// SIGNUP DRIVER
 app.post('/signup-driver', async (req, res) => {
   const client = await pool.connect();
   try {
@@ -103,7 +110,6 @@ app.post('/signup-driver', async (req, res) => {
       insurance_policy_number,
       policy_start_date,
       policy_end_date,
-      insurance_expiration,
       account_holder_first_name,
       account_holder_last_name,
       bank_name,
@@ -130,9 +136,9 @@ app.post('/signup-driver', async (req, res) => {
 
     await client.query(
       `INSERT INTO car_details 
-        (driver_id, make, model, year, color, license_plate, vin_number, insurance_expiration) 
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [driver_id, car_make, car_model, car_year, car_color, license_plate, vin_number, insurance_expiration]
+        (driver_id, make, model, year, color, license_plate, vin_number) 
+        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [driver_id, car_make, car_model, car_year, car_color, license_plate, vin_number]
     );
 
     await client.query(
@@ -160,6 +166,7 @@ app.post('/signup-driver', async (req, res) => {
   }
 });
 
+// LOGIN
 app.post('/login', async (req, res) => {
   const { username, password } = req.body;
   try {
