@@ -57,7 +57,7 @@ app.get('/api/driver/available-blocks', async (req, res) => {
         i.end_date AS insurance_end
       FROM blocks AS b
       LEFT JOIN latest_claims lc ON b.block_id = lc.block_id
-      INNER JOIN locations l ON b.location_id = l.id
+      INNER JOIN locations l ON b.location_id = l.location_id
       INNER JOIN drivers d ON d.driver_id = $1
       LEFT JOIN insurance_details i ON d.driver_id = i.driver_id
       WHERE b.status = 'available'
