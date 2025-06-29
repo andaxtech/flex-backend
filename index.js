@@ -17,16 +17,85 @@ app.get('/', (req, res) => {
   res.send('Flex Backend is Running with Updated DB!');
 });
 
-// Get available blocks
-app.get('/blocks', async (req, res) => {
+// ✅ New API: Get all available (unclaimed) blocks with store info, grouped by date
+app.get('/api/driver/available-blocks', async (req, res) => {
+  const { driver_id } = req.query;
+  const driverIdInt = parseInt(driver_id);
+
+  if (!driver_id || isNaN(driverIdInt)) {
+    return res.status(400).json({ success: false, message: 'Missing or invalid driver_id' });
+  }
+
   try {
-    const result = await pool.query('SELECT * FROM blocks WHERE status = $1', ['available']);
-    res.json(result.rows);
+    const query = `
+      WITH latest_claims AS (
+        SELECT *
+        FROM (
+          SELECT claim_id, block_id, driver_id, claim_time,
+                 ROW_NUMBER() OVER (PARTITION BY block_id ORDER BY claim_time DESC) AS rn
+          FROM block_claims
+        ) sub
+        WHERE rn = 1
+      )
+      SELECT
+        b.block_id,
+        b.date,
+        b.start_time,
+        b.end_time,
+        b.amount,
+        b.status,
+        b.location_id,
+        lc.claim_id,
+        l.store_id,
+        l.street,
+        l.city,
+        l.region,
+        l.phone,
+        l.postal_code,
+        d.license_expiration,
+        d.registration_expiration_date,
+        i.end_date AS insurance_end
+      FROM blocks AS b
+      LEFT JOIN latest_claims lc ON b.block_id = lc.block_id
+      INNER JOIN locations l ON b.location_id = l.id
+      INNER JOIN drivers d ON d.driver_id = $1
+      LEFT JOIN insurance_details i ON d.driver_id = i.driver_id
+      WHERE b.status = 'available'
+        AND lc.claim_id IS NULL
+        AND d.license_expiration > NOW()
+        AND d.registration_expiration_date > NOW()
+        AND i.end_date > NOW()
+      ORDER BY b.date, b.start_time
+    `;
+
+    const result = await pool.query(query, [driverIdInt]);
+
+    // Group blocks by date
+    const grouped = {};
+    result.rows.forEach((row) => {
+      const date = row.date?.toISOString().split('T')[0];
+      if (!grouped[date]) grouped[date] = [];
+      grouped[date].push({
+        blockId: row.block_id,
+        startTime: row.start_time?.toISOString() || null,
+        endTime: row.end_time?.toISOString() || null,
+        amount: row.amount,
+        locationId: row.location_id,
+        store: {
+          storeId: row.store_id,
+          address: `${row.street}, ${row.city}, ${row.region} ${row.postal_code}`,
+          phone: row.phone
+        }
+      });
+    });
+
+    res.json({ success: true, blocksByDate: grouped });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Database error' });
+    console.error('❌ Error fetching available blocks for driver:', err);
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
+
 
 // Claim a block
 app.post('/claim', async (req, res) => {
@@ -128,7 +197,7 @@ app.post('/signup-driver', async (req, res) => {
 
     const driverResult = await client.query(
       `INSERT INTO drivers 
-        (user_id, first_name, last_name, phone_number, email, license_number, license_expiration, birth_date, registration_date, status) 
+        (user_id, first_name, last_name, phone_number, email, license_number, license_expiration, birth_date, registration_expiration_date, status) 
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9) RETURNING driver_id`,
       [user_id, first_name, last_name, phone_number, email, license_number, license_expiration, birth_date, 'pending']
     );
