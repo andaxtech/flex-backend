@@ -47,7 +47,7 @@ app.get('/api/driver/available-blocks', async (req, res) => {
         b.location_id,
         lc.claim_id,
         l.store_id,
-        l.street,
+        l.street_name,
         l.city,
         l.region,
         l.phone,
@@ -83,7 +83,7 @@ app.get('/api/driver/available-blocks', async (req, res) => {
         locationId: row.location_id,
         store: {
           storeId: row.store_id,
-          address: `${row.street}, ${row.city}, ${row.region} ${row.postal_code}`,
+          address: `${row.street_name}, ${row.city}, ${row.region} ${row.postal_code}`,
           phone: row.phone
         }
       });
