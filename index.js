@@ -76,7 +76,7 @@ app.get('/api/driver/available-blocks', async (req, res) => {
       const date = row.date?.toISOString().split('T')[0];
       if (!grouped[date]) grouped[date] = [];
       grouped[date].push({
-        blockId: row.block_id,
+        block_id: row.block_id,
         startTime: row.start_time?.toISOString() || null,
         endTime: row.end_time?.toISOString() || null,
         amount: row.amount,
