@@ -81,6 +81,8 @@ app.get('/api/driver/available-blocks', async (req, res) => {
         endTime: row.end_time?.toISOString() || null,
         amount: row.amount,
         locationId: row.location_id,
+        city: row.city,
+        region: row.region,
         store: {
           storeId: row.store_id,
           address: `${row.street_name}, ${row.city}, ${row.region} ${row.postal_code}`,
