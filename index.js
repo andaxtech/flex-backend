@@ -140,20 +140,80 @@ app.post('/register', async (req, res) => {
   }
 });
 
-// Get claimed blocks
-app.get('/claims', async (req, res) => {
+// ✅ Refined API: Get claimed blocks with store info, grouped by date
+app.get('/api/driver/claimed-blocks', async (req, res) => {
   const { driver_id } = req.query;
+  const driverIdInt = parseInt(driver_id);
+
+  if (!driver_id || isNaN(driverIdInt)) {
+    return res.status(400).json({ success: false, message: 'Missing or invalid driver_id' });
+  }
+
   try {
-    const result = await pool.query(
-      'SELECT * FROM block_claims WHERE driver_id = $1',
-      [driver_id]
-    );
-    res.json(result.rows);
+    const query = `
+      WITH latest_claims AS (
+        SELECT *
+        FROM (
+          SELECT claim_id, block_id, driver_id, claim_time,
+                 ROW_NUMBER() OVER (PARTITION BY block_id ORDER BY claim_time DESC) AS rn
+          FROM block_claims
+          WHERE driver_id = $1
+        ) sub
+        WHERE rn = 1
+      )
+      SELECT
+        b.block_id,
+        b.date,
+        b.start_time,
+        b.end_time,
+        b.amount,
+        b.status,
+        b.location_id,
+        lc.claim_time,
+        l.store_id,
+        l.street_name,
+        l.city,
+        l.region,
+        l.phone,
+        l.postal_code
+      FROM latest_claims lc
+      INNER JOIN blocks b ON lc.block_id = b.block_id
+      INNER JOIN locations l ON b.location_id = l.location_id
+      ORDER BY b.date, b.start_time
+    `;
+
+    const result = await pool.query(query, [driverIdInt]);
+
+    // Group blocks by date
+    const grouped = {};
+    result.rows.forEach((row) => {
+      const date = row.date?.toISOString().split('T')[0];
+      if (!grouped[date]) grouped[date] = [];
+      grouped[date].push({
+        block_id: row.block_id,
+        startTime: row.start_time?.toISOString() || null,
+        endTime: row.end_time?.toISOString() || null,
+        amount: row.amount,
+        status: row.status,
+        claimTime: row.claim_time?.toISOString() || null,
+        locationId: row.location_id,
+        city: row.city,
+        region: row.region,
+        store: {
+          storeId: row.store_id,
+          address: `${row.street_name}, ${row.city}, ${row.region} ${row.postal_code}`,
+          phone: row.phone
+        }
+      });
+    });
+
+    res.json({ success: true, blocksByDate: grouped });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Database error fetching claims' });
+    console.error('❌ Error fetching claimed blocks for driver:', err);
+    res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
+
 
 // SIGNUP DRIVER
 app.post('/signup-driver', async (req, res) => {
