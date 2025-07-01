@@ -73,12 +73,12 @@ app.get('/api/driver/available-blocks', async (req, res) => {
     // Group blocks by date
     const grouped = {};
     result.rows.forEach((row) => {
-      const date = row.date?.toISOString().split('T')[0];
+      const date = row.date;
       if (!grouped[date]) grouped[date] = [];
       grouped[date].push({
         block_id: row.block_id,
-        startTime: row.start_time?.toISOString() || null,
-        endTime: row.end_time?.toISOString() || null,
+        startTime: row.start_time,
+        endTime: row.end_time,
         amount: row.amount,
         locationId: row.location_id,
         city: row.city,
