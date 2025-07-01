@@ -98,6 +98,7 @@ app.get('/api/driver/available-blocks', async (req, res) => {
   }
 });
 
+// Updated /claim API (UTC Only, No Conversion)
 app.post('/claim', async (req, res) => {
   const { block_id, driver_id } = req.body;
   const client = await pool.connect();
@@ -105,29 +106,33 @@ app.post('/claim', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // Step 1: Get block details (in UTC as stored)
+    // Step 1: Get block details as-is
     const blockRes = await client.query(
       'SELECT block_id, start_time, end_time, location_id FROM blocks WHERE block_id = $1',
       [block_id]
     );
-    if (blockRes.rows.length === 0) throw new Error('Block not found');
+    if (blockRes.rowCount === 0) throw new Error('Block not found');
+
     const { start_time, end_time, location_id } = blockRes.rows[0];
+    const newStart = new Date(start_time);
+    const newEnd = new Date(end_time);
 
-    // Step 2: Define UTC date range for same-day block filtering
-    const blockStart = new Date(start_time); // UTC from DB
-    const startOfDayUTC = new Date(Date.UTC(
-      blockStart.getUTCFullYear(),
-      blockStart.getUTCMonth(),
-      blockStart.getUTCDate()
-    ));
-    const endOfDayUTC = new Date(Date.UTC(
-      blockStart.getUTCFullYear(),
-      blockStart.getUTCMonth(),
-      blockStart.getUTCDate(),
+    // Step 2: Define start and end of the same calendar day (no timezone math)
+    const blockDate = new Date(start_time);
+    const startOfDay = new Date(
+      blockDate.getFullYear(),
+      blockDate.getMonth(),
+      blockDate.getDate(),
+      0, 0, 0, 0
+    );
+    const endOfDay = new Date(
+      blockDate.getFullYear(),
+      blockDate.getMonth(),
+      blockDate.getDate(),
       23, 59, 59, 999
-    ));
+    );
 
-    // Step 3: Get all claimed blocks by driver for that exact UTC day
+    // Step 3: Get all claimed blocks by driver on same date
     const existingClaims = await client.query(
       `
       SELECT b.start_time, b.end_time, b.block_id, b.location_id
@@ -136,17 +141,13 @@ app.post('/claim', async (req, res) => {
       WHERE bc.driver_id = $1
         AND b.start_time BETWEEN $2 AND $3
       `,
-      [driver_id, startOfDayUTC.toISOString(), endOfDayUTC.toISOString()]
+      [driver_id, startOfDay, endOfDay]
     );
 
-    // Step 4: Check conflicts in UTC
-    const newStart = new Date(start_time); // Already in UTC
-    const newEnd = new Date(end_time);     // Already in UTC
-
+    // Step 4: Check for conflicts (no conversion)
     for (const row of existingClaims.rows) {
-      const claimedStart = new Date(row.start_time); // UTC
-      const claimedEnd = new Date(row.end_time);     // UTC
-
+      const claimedStart = new Date(row.start_time);
+      const claimedEnd = new Date(row.end_time);
       const isOverlap = newStart < claimedEnd && newEnd > claimedStart;
       const isConsecutive =
         newStart.getTime() === claimedEnd.getTime() ||
@@ -164,12 +165,12 @@ app.post('/claim', async (req, res) => {
       }
     }
 
-    // Step 5: Prevent duplicate claim
+    // Step 5: Check if block already claimed
     const dupCheck = await client.query(
       'SELECT 1 FROM block_claims WHERE block_id = $1',
       [block_id]
     );
-    if (dupCheck.rows.length > 0) {
+    if (dupCheck.rowCount > 0) {
       throw new Error('This block has already been claimed.');
     }
 
@@ -204,6 +205,7 @@ app.post('/claim', async (req, res) => {
     client.release();
   }
 });
+
 
 
 
