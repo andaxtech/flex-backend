@@ -190,25 +190,55 @@ app.post('/claim', async (req, res) => {
 });
 
 
-//Unclaim Block Endpoint
+//Unclaim Block Endpoint( with logic 60 min cancellation policy)
 app.post('/unclaim', async (req, res) => {
-  const { block_id, driver_id } = req.body;
+  const { block_id, driver_id, override_penalty } = req.body;
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    // Delete claim
+    // Get block start time
+    const blockResult = await client.query(
+      'SELECT start_time FROM blocks WHERE block_id = $1',
+      [block_id]
+    );
+
+    if (blockResult.rowCount === 0) {
+      throw new Error('Block not found');
+    }
+
+    const startTime = new Date(blockResult.rows[0].start_time);
+    const now = new Date();
+    const diffMinutes = (startTime - now) / (1000 * 60); // difference in minutes
+
+    // If within 60 mins and no override flag, return warning
+    if (diffMinutes <= 60 && !override_penalty) {
+      return res.status(400).json({
+        warning: true,
+        message: 'Unclaiming now will impact your standing. Confirm to proceed.',
+      });
+    }
+
+    // Delete from block_claims
     await client.query(
       'DELETE FROM block_claims WHERE block_id = $1 AND driver_id = $2',
       [block_id, driver_id]
     );
 
-    // Set block to available
+    // Set block status back to available
     await client.query(
       'UPDATE blocks SET status = $1 WHERE block_id = $2',
       ['available', block_id]
     );
+
+    // Log performance penalty if within 60 mins
+    if (diffMinutes <= 60) {
+      await client.query(
+        'INSERT INTO driver_performance (driver_id, block_id, issue, created_at) VALUES ($1, $2, $3, NOW())',
+        [driver_id, block_id, 'Late unclaim within 1 hour']
+      );
+    }
 
     await client.query('COMMIT');
     res.status(200).json({ success: true });
@@ -220,6 +250,7 @@ app.post('/unclaim', async (req, res) => {
     client.release();
   }
 });
+
 
 
 
