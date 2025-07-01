@@ -148,10 +148,10 @@ app.post('/claim', async (req, res) => {
     for (const row of existingClaims.rows) {
       const claimedStart = new Date(row.start_time);
       const claimedEnd = new Date(row.end_time);
-      const isOverlap = newStart < claimedEnd && newEnd > claimedStart;
+      const isOverlap = newStart < claimedEnd //&& newEnd > claimedStart;
       const isConsecutive =
-        newStart.getTime() === claimedEnd.getTime() ||
-        newEnd.getTime() === claimedStart.getTime();
+        newStart.getTime() === claimedEnd.getTime(); //||
+        //newEnd.getTime() === claimedStart.getTime();
       const isSameLocation = row.location_id === location_id;
 
       if (isOverlap) {
