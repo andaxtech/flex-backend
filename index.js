@@ -98,7 +98,7 @@ app.get('/api/driver/available-blocks', async (req, res) => {
   }
 });
 
-// Updated /claim API (UTC Only, No Conversion)
+// Updated /claim API (no coversion)
 app.post('/claim', async (req, res) => {
   const { block_id, driver_id } = req.body;
   const client = await pool.connect();
@@ -113,57 +113,82 @@ app.post('/claim', async (req, res) => {
     );
     if (blockRes.rowCount === 0) throw new Error('Block not found');
 
-    const { start_time, end_time, location_id } = blockRes.rows[0];
+    const { start_time, end_time } = blockRes.rows[0];
     const newStart = new Date(start_time);
     const newEnd = new Date(end_time);
 
-    // Step 2: Define start and end of the same calendar day (no timezone math)
+    // Step 2: Define same-day range (no timezone logic)
     const blockDate = new Date(start_time);
-    const startOfDay = new Date(
-      blockDate.getFullYear(),
-      blockDate.getMonth(),
-      blockDate.getDate(),
-      0, 0, 0, 0
-    );
-    const endOfDay = new Date(
-      blockDate.getFullYear(),
-      blockDate.getMonth(),
-      blockDate.getDate(),
-      23, 59, 59, 999
-    );
+    const startOfDay = new Date(blockDate.getFullYear(), blockDate.getMonth(), blockDate.getDate(), 0, 0, 0, 0);
+    const endOfDay = new Date(blockDate.getFullYear(), blockDate.getMonth(), blockDate.getDate(), 23, 59, 59, 999);
 
-    // Step 3: Get all claimed blocks by driver on same date
+    // Step 3: Get all claimed blocks by driver on same day
     const existingClaims = await client.query(
       `
-      SELECT b.start_time, b.end_time, b.block_id, b.location_id
+      SELECT b.start_time, b.end_time
       FROM block_claims bc
       JOIN blocks b ON bc.block_id = b.block_id
-      WHERE bc.driver_id = $1
-        AND b.start_time BETWEEN $2 AND $3
+      WHERE bc.driver_id = $1 AND b.start_time BETWEEN $2 AND $3
       `,
       [driver_id, startOfDay, endOfDay]
     );
 
-    // Step 4: Check for conflicts (no conversion)
+    // Step 4: Check for overlaps (allow only one per day)
+    let overlapCount = 0;
     for (const row of existingClaims.rows) {
       const claimedStart = new Date(row.start_time);
       const claimedEnd = new Date(row.end_time);
-      //const isOverlap = newStart < claimedEnd //&& newEnd > claimedStart;
-      const isConsecutive =
-        newStart.getTime() === claimedEnd.getTime(); //||
-        //newEnd.getTime() === claimedStart.getTime();
-      const isSameLocation = row.location_id === location_id;
 
-      //if (isOverlap) {
-        //throw new Error('Block overlaps with another you’ve claimed.');
-      }
-
-      if (isConsecutive && !isSameLocation) {
-        throw new Error(
-          'You cannot accept consecutive blocks at different store locations.'
-        );
+      const isOverlap = newStart <= claimedEnd && newEnd >= claimedStart;
+      if (isOverlap) {
+        overlapCount += 1;
+        if (overlapCount > 1) {
+          throw new Error('You are allowed to accept overlapping blocks only once a day.');
+        }
       }
     }
+
+    // Step 5: Check if block already claimed
+    const dupCheck = await client.query(
+      'SELECT 1 FROM block_claims WHERE block_id = $1',
+      [block_id]
+    );
+    if (dupCheck.rowCount > 0) {
+      throw new Error('This block has already been claimed.');
+    }
+
+    // Step 6: Insert claim
+    const claimResult = await client.query(
+      `
+      INSERT INTO block_claims (block_id, driver_id, claim_time)
+      VALUES ($1, $2, NOW())
+      RETURNING *
+      `,
+      [block_id, driver_id]
+    );
+
+    // Step 7: Update block status
+    await client.query(
+      'UPDATE blocks SET status = $1 WHERE block_id = $2',
+      ['claimed', block_id]
+    );
+
+    await client.query('COMMIT');
+    res.status(201).json({
+      success: true,
+      message: 'Block claimed successfully',
+      data: claimResult.rows[0],
+    });
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('❌ Claim error:', err.message);
+    res.status(400).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 
     // Step 5: Check if block already claimed
     const dupCheck = await client.query(
