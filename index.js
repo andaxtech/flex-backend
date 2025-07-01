@@ -98,6 +98,7 @@ app.get('/api/driver/available-blocks', async (req, res) => {
   }
 });
 
+//API for Claim with Business logic- No back to back blocks unless they are at the same location- (Up to 2), no overlap booking.
 app.post('/claim', async (req, res) => {
   const { block_id, driver_id } = req.body;
   const client = await pool.connect();
@@ -134,17 +135,22 @@ app.post('/claim', async (req, res) => {
       const claimedStart = new Date(row.start_time);
       const claimedEnd = new Date(row.end_time);
 
-      const overlaps = newStart < claimedEnd && newEnd > claimedStart;
-      const consecutive =
-        newStart.getTime() === claimedEnd.getTime() ||
-        newEnd.getTime() === claimedStart.getTime();
+      const isOverlap = newStart < claimedEnd && newEnd > claimedStart;
+      const isConsecutive =
+      newStart.getTime() === claimedEnd.getTime() ||
+      newEnd.getTime() === claimedStart.getTime();
 
-      if (overlaps || consecutive) {
-        throw new Error(
-          `Block conflicts with another you've accepted. Drivers must have time between blocks.`
-        );
+      const isSameLocation = row.location_id === blockRow.location_id;
+
+      if (isOverlap) {
+      throw new Error('Block overlaps with another you’ve claimed.');
       }
-    }
+
+      if (isConsecutive && !isSameLocation) {
+      throw new Error(
+      'You cannot accept consecutive blocks at different store locations.'
+      );
+      }
 
     // Step 4: Insert claim
     const claimResult = await client.query(
