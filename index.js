@@ -98,30 +98,65 @@ app.get('/api/driver/available-blocks', async (req, res) => {
   }
 });
 
-// Claim a block
 app.post('/claim', async (req, res) => {
   const { block_id, driver_id } = req.body;
-
   const client = await pool.connect();
+
   try {
     await client.query('BEGIN');
 
-    // Check if block is already claimed
-    const existing = await client.query(
-      'SELECT * FROM block_claims WHERE block_id = $1',
+    // Step 1: Get block details
+    const blockRes = await client.query(
+      'SELECT start_time, end_time FROM blocks WHERE block_id = $1',
       [block_id]
     );
-    if (existing.rows.length > 0) {
-      throw new Error('Block is already claimed');
+    if (blockRes.rows.length === 0) throw new Error('Block not found');
+    const { start_time, end_time } = blockRes.rows[0];
+    const blockDate = start_time.toISOString().split('T')[0];
+
+    // Step 2: Get all claimed blocks for driver on the same day
+    const existingClaims = await client.query(
+      `
+      SELECT b.start_time, b.end_time, b.block_id
+      FROM block_claims bc
+      JOIN blocks b ON bc.block_id = b.block_id
+      WHERE bc.driver_id = $1
+        AND DATE(b.start_time) = $2
+      `,
+      [driver_id, blockDate]
+    );
+
+    // Step 3: Check for conflicts
+    const newStart = new Date(start_time);
+    const newEnd = new Date(end_time);
+
+    for (const row of existingClaims.rows) {
+      const claimedStart = new Date(row.start_time);
+      const claimedEnd = new Date(row.end_time);
+
+      const overlaps = newStart < claimedEnd && newEnd > claimedStart;
+      const consecutive =
+        newStart.getTime() === claimedEnd.getTime() ||
+        newEnd.getTime() === claimedStart.getTime();
+
+      if (overlaps || consecutive) {
+        throw new Error(
+          `Block conflicts with another you've accepted. Drivers must have time between blocks.`
+        );
+      }
     }
 
-    // Create claim
+    // Step 4: Insert claim
     const claimResult = await client.query(
-      'INSERT INTO block_claims (block_id, driver_id, claim_time) VALUES ($1, $2, NOW()) RETURNING *',
+      `
+      INSERT INTO block_claims (block_id, driver_id, claim_time)
+      VALUES ($1, $2, NOW())
+      RETURNING *
+      `,
       [block_id, driver_id]
     );
 
-    // Update block status
+    // Step 5: Mark block as claimed
     await client.query(
       'UPDATE blocks SET status = $1 WHERE block_id = $2',
       ['claimed', block_id]
@@ -132,11 +167,12 @@ app.post('/claim', async (req, res) => {
   } catch (err) {
     await client.query('ROLLBACK');
     console.error(err);
-    res.status(500).json({ error: err.message });
+    res.status(400).json({ error: err.message });
   } finally {
     client.release();
   }
 });
+
 
 //Unclaim Block Endpoint
 app.post('/unclaim', async (req, res) => {
