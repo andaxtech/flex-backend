@@ -154,8 +154,8 @@ app.post('/claim', async (req, res) => {
         //newEnd.getTime() === claimedStart.getTime();
       const isSameLocation = row.location_id === location_id;
 
-      if (isOverlap) {
-        throw new Error('Block overlaps with another you’ve claimed.');
+      //if (isOverlap) {
+        //throw new Error('Block overlaps with another you’ve claimed.');
       }
 
       if (isConsecutive && !isSameLocation) {
