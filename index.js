@@ -190,48 +190,6 @@ app.post('/claim', async (req, res) => {
 });
 
 
-    // Step 5: Check if block already claimed
-    const dupCheck = await client.query(
-      'SELECT 1 FROM block_claims WHERE block_id = $1',
-      [block_id]
-    );
-    if (dupCheck.rowCount > 0) {
-      throw new Error('This block has already been claimed.');
-    }
-
-    // Step 6: Insert claim
-    const claimResult = await client.query(
-      `
-      INSERT INTO block_claims (block_id, driver_id, claim_time)
-      VALUES ($1, $2, NOW())
-      RETURNING *
-      `,
-      [block_id, driver_id]
-    );
-
-    // Step 7: Update block status
-    await client.query(
-      'UPDATE blocks SET status = $1 WHERE block_id = $2',
-      ['claimed', block_id]
-    );
-
-    await client.query('COMMIT');
-    res.status(201).json({
-      success: true,
-      message: 'Block claimed successfully',
-      data: claimResult.rows[0],
-    });
-
-  } catch (err) {
-    await client.query('ROLLBACK');
-    console.error('❌ Claim error:', err.message);
-    res.status(400).json({ error: err.message });
-  } finally {
-    client.release();
-  }
-});
-
-
 
 
 //Unclaim Block Endpoint( with logic 60 min cancellation policy)
