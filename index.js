@@ -215,7 +215,7 @@ app.post('/unclaim', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // Get block start time
+    // Get block start_time exactly as stored in DB (no conversion)
     const blockResult = await client.query(
       'SELECT start_time FROM blocks WHERE block_id = $1',
       [block_id]
@@ -225,11 +225,12 @@ app.post('/unclaim', async (req, res) => {
       throw new Error('Block not found');
     }
 
-    const startTime = new Date(blockResult.rows[0].start_time);
-    const now = new Date();
-    const diffMinutes = (startTime - now) / (1000 * 60); // difference in minutes
+    const startTime = new Date(blockResult.rows[0].start_time); // use as-is
+    const now = new Date(); // also use as-is
 
-    // If within 60 mins and no override flag, return warning
+    const diffMinutes = (startTime.getTime() - now.getTime()) / (1000 * 60);
+
+    // Warn if unclaim is within 60 minutes and no override
     if (diffMinutes <= 60 && !override_penalty) {
       return res.status(400).json({
         warning: true,
@@ -237,7 +238,7 @@ app.post('/unclaim', async (req, res) => {
       });
     }
 
-    // Delete from block_claims
+    // Unclaim the block
     await client.query(
       'DELETE FROM block_claims WHERE block_id = $1 AND driver_id = $2',
       [block_id, driver_id]
@@ -249,10 +250,13 @@ app.post('/unclaim', async (req, res) => {
       ['available', block_id]
     );
 
-    // Log performance penalty if within 60 mins
+    // Log performance penalty if needed
     if (diffMinutes <= 60) {
       await client.query(
-        'INSERT INTO driver_performance (driver_id, block_id, issue, created_at) VALUES ($1, $2, $3, NOW())',
+        `
+        INSERT INTO driver_performance (driver_id, block_id, issue, created_at)
+        VALUES ($1, $2, $3, NOW())
+        `,
         [driver_id, block_id, 'Late unclaim within 1 hour']
       );
     }
@@ -261,12 +265,13 @@ app.post('/unclaim', async (req, res) => {
     res.status(200).json({ success: true });
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error(err);
+    console.error('❌ Unclaim error:', err.message);
     res.status(500).json({ error: err.message });
   } finally {
     client.release();
   }
 });
+
 
 
 
