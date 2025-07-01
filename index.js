@@ -108,17 +108,18 @@ app.post('/claim', async (req, res) => {
 
     // Step 1: Get block details
     const blockRes = await client.query(
-      'SELECT start_time, end_time FROM blocks WHERE block_id = $1',
+      'SELECT block_id, start_time, end_time, location_id FROM blocks WHERE block_id = $1',
       [block_id]
     );
     if (blockRes.rows.length === 0) throw new Error('Block not found');
-    const { start_time, end_time } = blockRes.rows[0];
+    const blockRow = blockRes.rows[0];
+    const { start_time, end_time, location_id } = blockRow;
     const blockDate = start_time.toISOString().split('T')[0];
 
     // Step 2: Get all claimed blocks for driver on the same day
     const existingClaims = await client.query(
       `
-      SELECT b.start_time, b.end_time, b.block_id
+      SELECT b.start_time, b.end_time, b.block_id, b.location_id
       FROM block_claims bc
       JOIN blocks b ON bc.block_id = b.block_id
       WHERE bc.driver_id = $1
@@ -137,22 +138,31 @@ app.post('/claim', async (req, res) => {
 
       const isOverlap = newStart < claimedEnd && newEnd > claimedStart;
       const isConsecutive =
-      newStart.getTime() === claimedEnd.getTime() ||
-      newEnd.getTime() === claimedStart.getTime();
-
-      const isSameLocation = row.location_id === blockRow.location_id;
+        newStart.getTime() === claimedEnd.getTime() ||
+        newEnd.getTime() === claimedStart.getTime();
+      const isSameLocation = row.location_id === location_id;
 
       if (isOverlap) {
-      throw new Error('Block overlaps with another you’ve claimed.');
+        throw new Error('Block overlaps with another you’ve claimed.');
       }
 
       if (isConsecutive && !isSameLocation) {
-      throw new Error(
-      'You cannot accept consecutive blocks at different store locations.'
-      );
+        throw new Error(
+          'You cannot accept consecutive blocks at different store locations.'
+        );
       }
+    }
 
-    // Step 4: Insert claim
+    // Step 4: Prevent duplicate claim for the same block
+    const dupCheck = await client.query(
+      'SELECT * FROM block_claims WHERE block_id = $1',
+      [block_id]
+    );
+    if (dupCheck.rows.length > 0) {
+      throw new Error('This block has already been claimed.');
+    }
+
+    // Step 5: Insert claim
     const claimResult = await client.query(
       `
       INSERT INTO block_claims (block_id, driver_id, claim_time)
@@ -162,7 +172,7 @@ app.post('/claim', async (req, res) => {
       [block_id, driver_id]
     );
 
-    // Step 5: Mark block as claimed
+    // Step 6: Mark block as claimed
     await client.query(
       'UPDATE blocks SET status = $1 WHERE block_id = $2',
       ['claimed', block_id]
@@ -172,7 +182,7 @@ app.post('/claim', async (req, res) => {
     res.status(201).json(claimResult.rows[0]);
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error(err);
+    console.error('❌ Claim error:', err.message);
     res.status(400).json({ error: err.message });
   } finally {
     client.release();
