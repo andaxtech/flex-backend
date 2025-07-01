@@ -98,21 +98,80 @@ app.get('/api/driver/available-blocks', async (req, res) => {
   }
 });
 
-
 // Claim a block
 app.post('/claim', async (req, res) => {
   const { block_id, driver_id } = req.body;
+
+  const client = await pool.connect();
   try {
-    const result = await pool.query(
-      'INSERT INTO block_claims (block_id, driver_id, claim_time, status) VALUES ($1, $2, NOW(), $3) RETURNING *',
-      [block_id, driver_id, 'claimed']
+    await client.query('BEGIN');
+
+    // Check if block is already claimed
+    const existing = await client.query(
+      'SELECT * FROM block_claims WHERE block_id = $1',
+      [block_id]
     );
-    res.status(201).json(result.rows[0]);
+    if (existing.rows.length > 0) {
+      throw new Error('Block is already claimed');
+    }
+
+    // Create claim
+    const claimResult = await client.query(
+      'INSERT INTO block_claims (block_id, driver_id, claim_time) VALUES ($1, $2, NOW()) RETURNING *',
+      [block_id, driver_id]
+    );
+
+    // Update block status
+    await client.query(
+      'UPDATE blocks SET status = $1 WHERE block_id = $2',
+      ['claimed', block_id]
+    );
+
+    await client.query('COMMIT');
+    res.status(201).json(claimResult.rows[0]);
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error(err);
-    res.status(500).json({ error: 'Database error' });
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
+
+//Unclaim Block Endpoint
+app.post('/unclaim', async (req, res) => {
+  const { block_id, driver_id } = req.body;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Delete claim
+    await client.query(
+      'DELETE FROM block_claims WHERE block_id = $1 AND driver_id = $2',
+      [block_id, driver_id]
+    );
+
+    // Set block to available
+    await client.query(
+      'UPDATE blocks SET status = $1 WHERE block_id = $2',
+      ['available', block_id]
+    );
+
+    await client.query('COMMIT');
+    res.status(200).json({ success: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+
+
+
 
 // Get all drivers
 app.get('/drivers', async (req, res) => {
