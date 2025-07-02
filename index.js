@@ -41,8 +41,8 @@ app.get('/api/driver/available-blocks', async (req, res) => {
       SELECT
         b.block_id,
         b.date,
-        (b.date + b.start_time)::timestamptz AT TIME ZONE 'UTC' AS start_time_utc,
-        (b.date + b.end_time)::timestamptz AT TIME ZONE 'UTC' AS end_time_utc,
+        (b.date::timestamp + b.start_time)::timestamptz AT TIME ZONE 'UTC' AS start_time_utc,
+        (b.date::timestamp + b.end_time)::timestamptz AT TIME ZONE 'UTC' AS end_time_utc,
         b.amount,
         b.status,
         b.location_id,
