@@ -18,6 +18,7 @@ app.get('/', (req, res) => {
 });
 
 // ✅ New API: Get all available (unclaimed) blocks with store info, grouped by date
+// ✅ New API: Get all available (unclaimed) blocks with store info, grouped by date
 app.get('/api/driver/available-blocks', async (req, res) => {
   const { driver_id } = req.query;
   const driverIdInt = parseInt(driver_id);
@@ -40,8 +41,8 @@ app.get('/api/driver/available-blocks', async (req, res) => {
       SELECT
         b.block_id,
         b.date,
-        b.start_time,
-        b.end_time,
+        (b.date + b.start_time)::timestamptz AT TIME ZONE 'UTC' AS start_time_utc,
+        (b.date + b.end_time)::timestamptz AT TIME ZONE 'UTC' AS end_time_utc,
         b.amount,
         b.status,
         b.location_id,
@@ -70,15 +71,17 @@ app.get('/api/driver/available-blocks', async (req, res) => {
 
     const result = await pool.query(query, [driverIdInt]);
 
-    // Group blocks by date
+    // Group blocks by UTC date string (ISO, e.g. "2025-07-01")
     const grouped = {};
     result.rows.forEach((row) => {
-      const date = row.date;
-      if (!grouped[date]) grouped[date] = [];
-      grouped[date].push({
+      const dateKey = row.date.toISOString().split('T')[0];
+
+      if (!grouped[dateKey]) grouped[dateKey] = [];
+
+      grouped[dateKey].push({
         block_id: row.block_id,
-        startTime: row.start_time,
-        endTime: row.end_time,
+        startTime: row.start_time_utc.toISOString(),  // UTC ISO string
+        endTime: row.end_time_utc.toISOString(),      // UTC ISO string
         amount: row.amount,
         locationId: row.location_id,
         city: row.city,
@@ -97,6 +100,7 @@ app.get('/api/driver/available-blocks', async (req, res) => {
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
+
 
 // Updated /claim API (no coversion)
 app.post('/claim', async (req, res) => {
@@ -192,7 +196,6 @@ app.post('/claim', async (req, res) => {
 
 
 
-//Unclaim Block Endpoint( with logic 60 min cancellation policy)
 app.post('/unclaim', async (req, res) => {
   const { block_id, driver_id, override_penalty } = req.body;
 
@@ -200,9 +203,9 @@ app.post('/unclaim', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // Get block start_time exactly as stored in DB (no conversion)
+    // Get UTC timestamp from DB directly
     const blockResult = await client.query(
-      'SELECT start_time FROM blocks WHERE block_id = $1',
+      'SELECT start_time AT TIME ZONE \'UTC\' AS start_time FROM blocks WHERE block_id = $1',
       [block_id]
     );
 
@@ -210,12 +213,11 @@ app.post('/unclaim', async (req, res) => {
       throw new Error('Block not found');
     }
 
-    const startTime = new Date(blockResult.rows[0].start_time); // use as-is
-    const now = new Date(); // also use as-is
+    const startTimeUtc = new Date(blockResult.rows[0].start_time); // guaranteed UTC
+    const nowUtc = new Date(); // JS Date is UTC by default
 
-    const diffMinutes = (startTime.getTime() - now.getTime()) / (1000 * 60);
+    const diffMinutes = (startTimeUtc.getTime() - nowUtc.getTime()) / (1000 * 60);
 
-    // Warn if unclaim is within 60 minutes and no override
     if (diffMinutes <= 60 && !override_penalty) {
       return res.status(400).json({
         warning: true,
@@ -223,19 +225,18 @@ app.post('/unclaim', async (req, res) => {
       });
     }
 
-    // Unclaim the block
+    // Proceed with unclaim
     await client.query(
       'DELETE FROM block_claims WHERE block_id = $1 AND driver_id = $2',
       [block_id, driver_id]
     );
 
-    // Set block status back to available
     await client.query(
       'UPDATE blocks SET status = $1 WHERE block_id = $2',
       ['available', block_id]
     );
 
-    // Log performance penalty if needed
+    // Log performance penalty if within 60 min
     if (diffMinutes <= 60) {
       await client.query(
         `
@@ -256,6 +257,7 @@ app.post('/unclaim', async (req, res) => {
     client.release();
   }
 });
+
 
 
 
