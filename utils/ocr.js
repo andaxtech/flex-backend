@@ -1,6 +1,5 @@
 require('dotenv').config();
-
-const { OpenAI } = require('openai'); // ✅ Destructure here for v5+
+const { OpenAI } = require('openai'); // v5+ OpenAI SDK
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -9,16 +8,14 @@ const openai = new OpenAI({
 async function extractText(imageUrl) {
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o',
-
+      model: 'gpt-4o', // ✅ Correct model
       messages: [
         {
           role: 'user',
           content: [
             {
               type: 'text',
-              text: `
-You are an OCR extraction engine for pizza delivery labels. Read the image and extract exactly the following:
+              text: `You are an OCR extraction engine for pizza delivery labels. Extract the following fields:
 
 {
   "order_number": "<6-digit number or null>",
@@ -26,8 +23,7 @@ You are an OCR extraction engine for pizza delivery labels. Read the image and e
   "customer_name": "<name like 'ABILLA' or null>"
 }
 
-Respond ONLY with a valid JSON object. Do not include any explanation or extra text.`,
-
+Respond ONLY with valid JSON. No extra text or formatting.`,
             },
             {
               type: 'image_url',
@@ -39,19 +35,20 @@ Respond ONLY with a valid JSON object. Do not include any explanation or extra t
       max_tokens: 300,
     });
 
-    const content = response.choices[0]?.message?.content;
+    const content = response.choices?.[0]?.message?.content?.trim();
 
     try {
       console.log('🔍 Raw OpenAI response:', content);
-
-      return JSON.parse(content);
+      const parsed = JSON.parse(content);
+      return parsed;
     } catch (err) {
-      console.warn('⚠️ Could not parse JSON, returning raw content');
-      return content;
+      console.warn('⚠️ Could not parse JSON, falling back to raw content');
+      return { error: 'Unparsable JSON', raw: content };
     }
+
   } catch (err) {
     console.error('❌ OpenAI Vision failed:', err);
-    return '';
+    return { error: 'OpenAI Vision failed', details: err.message };
   }
 }
 
