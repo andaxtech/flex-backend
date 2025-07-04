@@ -1,4 +1,5 @@
 require('dotenv').config();
+
 const { OpenAI } = require('openai');
 
 const openai = new OpenAI({
@@ -15,15 +16,24 @@ async function extractText(imageUrl) {
           content: [
             {
               type: 'text',
-              text: `You are an OCR extraction engine for pizza delivery labels. Extract the following:
+              text: `
+You are an OCR extraction engine reading Domino's pizza labels. From the image, extract and return a valid JSON object with the following keys:
 
 {
   "order_number": "<6-digit number or null>",
-  "order_total": "<total in USD like 21.84 or null>",
-  "customer_name": "<name like 'ABILLA' or null>"
+  "order_total": "<amount like 21.84 or null>",
+  "customer_name": "<name like 'ABILLA' or null>",
+  "slice_number": "<this order's number in the batch, e.g. 2>",
+  "total_slices": "<total number of orders in this batch, e.g. 2>",
+  "order_type": "<'Carry-Out' or 'Delivery'>",
+  "payment_status": "<'PAID' or 'UNPAID'>",
+  "order_time": "<formatted time like '05:38 PM' or null>",
+  "order_date": "<formatted date like '06/08' or null>",
+  "phone_number": "<if visible, formatted number like (123) 456-7890, else null>"
 }
 
-Respond ONLY with valid JSON. No extra text or formatting.`,
+⚠️ Respond ONLY with a pure JSON object, no explanation or markdown.
+            `,
             },
             {
               type: 'image_url',
@@ -32,28 +42,21 @@ Respond ONLY with valid JSON. No extra text or formatting.`,
           ],
         },
       ],
-      max_tokens: 300,
+      max_tokens: 500,
     });
 
-    let content = response.choices?.[0]?.message?.content?.trim();
-
-    // ✅ Strip markdown-style code block ```json ... ```
-    if (content.startsWith('```')) {
-      content = content.replace(/```(?:json)?\s*([\s\S]*?)\s*```/, '$1').trim();
-    }
-
-    console.log('🔍 Cleaned OpenAI response:', content);
+    const content = response.choices[0]?.message?.content;
 
     try {
+      console.log('🔍 Raw OpenAI response:', content);
       return JSON.parse(content);
     } catch (err) {
-      console.warn('⚠️ Still could not parse JSON, returning raw content');
-      return { error: 'Unparsable JSON', raw: content };
+      console.warn('⚠️ Could not parse JSON, returning raw content');
+      return content;
     }
-
   } catch (err) {
     console.error('❌ OpenAI Vision failed:', err);
-    return { error: 'OpenAI Vision failed', details: err.message };
+    return '';
   }
 }
 
