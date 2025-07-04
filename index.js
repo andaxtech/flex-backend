@@ -4,6 +4,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 const pool = require('./db');
+const deliveryRoutes = require('./routes/delivery');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -11,6 +12,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'change_this_to_secret';
 
 app.use(cors());
 app.use(express.json());
+app.use('/api', deliveryRoutes);
 
 // Test route
 app.get('/', (req, res) => {
