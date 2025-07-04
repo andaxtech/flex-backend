@@ -4,7 +4,7 @@ const upload = multer({ dest: 'uploads/' });
 
 const extractText = require('../utils/ocr');
 const uploadImage = require('../utils/upload');
-const pool = require('../db'); // your PostgreSQL connection
+const pool = require('../db');
 
 const router = express.Router();
 
