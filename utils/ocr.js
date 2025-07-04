@@ -18,13 +18,16 @@ async function extractText(imageUrl) {
             {
               type: 'text',
               text: `
-You are analyzing a pizza delivery label. Extract the following fields:
+You are an OCR extraction engine for pizza delivery labels. Read the image and extract exactly the following:
 
-- Order Number (a 6-digit number)
-- Order Total (as a dollar amount)
-- Customer Name (full name if possible)
+{
+  "order_number": "<6-digit number or null>",
+  "order_total": "<total in USD like 21.84 or null>",
+  "customer_name": "<name like 'ABILLA' or null>"
+}
 
-Respond ONLY as a JSON object with these three fields: "order_number", "order_total", and "customer_name".`,
+Respond ONLY with a valid JSON object. Do not include any explanation or extra text.`,
+
             },
             {
               type: 'image_url',
@@ -39,6 +42,8 @@ Respond ONLY as a JSON object with these three fields: "order_number", "order_to
     const content = response.choices[0]?.message?.content;
 
     try {
+      console.log('🔍 Raw OpenAI response:', content);
+
       return JSON.parse(content);
     } catch (err) {
       console.warn('⚠️ Could not parse JSON, returning raw content');
