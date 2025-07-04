@@ -463,6 +463,14 @@ app.post('/login', async (req, res) => {
 
     const payload = { user_id: user.user_id };
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '1h' });
+
+    res.json({ token });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Login failed' });
+  }
+}); // ✅ closes app.post('/login')
+
 // Middleware to log all incoming requests
 app.use((req, res, next) => {
   console.log(`➡️ Incoming: ${req.method} ${req.url}`);
