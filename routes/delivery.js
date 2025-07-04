@@ -16,22 +16,55 @@ router.post('/start-delivery', upload.single('photo'), async (req, res) => {
     const imageUrl = await uploadImage(filePath);
     const ocrResult = await extractText(imageUrl);
 
-    let orderNumber = null;
-    let orderTotal = null;
-    let customerName = null;
+    const {
+      order_number = null,
+      order_total = null,
+      customer_name = null,
+      slice_number = null,
+      total_slices = null,
+      order_type = null,
+      payment_status = null,
+      order_time = null,
+      order_date = null,
+      phone_number = null
+    } = typeof ocrResult === 'object' ? ocrResult : {};
 
-    if (typeof ocrResult === 'object') {
-      orderNumber = ocrResult.order_number || null;
-      orderTotal = ocrResult.order_total || null;
-      customerName = ocrResult.customer_name || null;
-    }
+    // 🧠 Step 1: Lookup store_id via claimed_blocks and locations
+    const storeQuery = await pool.query(
+      `SELECT l.store_id
+       FROM claimed_blocks cb
+       JOIN blocks b ON cb.block_id = b.block_id
+       JOIN locations l ON b.location_id = l.location_id
+       WHERE cb.driver_id = $1
+       ORDER BY cb.claimed_at DESC
+       LIMIT 1`,
+      [driver_id]
+    );
 
+    const store_id = storeQuery.rows[0]?.store_id || null;
+
+    // ✅ Step 2: Insert delivery log
     const result = await pool.query(
       `INSERT INTO delivery_logs 
-        (driver_id, order_number, order_total, customer_name, store_id, delivery_photo_url, ocr_text, ocr_status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'parsed')
+        (driver_id, order_number, order_total, customer_name, slice_number, total_slices, order_type, payment_status, order_time, order_date, phone_number, store_id, delivery_photo_url, ocr_text, ocr_status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'parsed')
        RETURNING *`,
-      [driver_id, orderNumber, orderTotal, customerName, null, imageUrl, JSON.stringify(ocrResult)]
+      [
+        driver_id,
+        order_number,
+        order_total,
+        customer_name,
+        slice_number,
+        total_slices,
+        order_type,
+        payment_status,
+        order_time,
+        order_date,
+        phone_number,
+        store_id,
+        imageUrl,
+        JSON.stringify(ocrResult)
+      ]
     );
 
     res.json({ success: true, delivery: result.rows[0] });
