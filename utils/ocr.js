@@ -49,7 +49,9 @@ You are an OCR extraction engine reading Domino's pizza labels. From the image, 
 
     try {
       console.log('🔍 Raw OpenAI response:', content);
-      return JSON.parse(content);
+      const cleaned = content.trim().replace(/^```json|^```|```$/g, '');
+      return JSON.parse(cleaned);
+
     } catch (err) {
       console.warn('⚠️ Could not parse JSON, returning raw content');
       return content;
