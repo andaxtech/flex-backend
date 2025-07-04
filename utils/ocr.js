@@ -1,7 +1,10 @@
-const OpenAI = require('openai');
 require('dotenv').config();
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const { OpenAI } = require('openai'); // ✅ Destructure here for v5+
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 async function extractText(imageUrl) {
   try {
@@ -35,7 +38,7 @@ Respond ONLY as a JSON object with these three fields: "order_number", "order_to
     const content = response.choices[0]?.message?.content;
 
     try {
-      return JSON.parse(content); // If it's valid JSON, great.
+      return JSON.parse(content);
     } catch (err) {
       console.warn('⚠️ Could not parse JSON, returning raw content');
       return content;
