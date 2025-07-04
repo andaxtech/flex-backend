@@ -2,9 +2,9 @@ const express = require('express');
 const multer = require('multer');
 const upload = multer({ dest: 'uploads/' });
 
-const extractText = require('../utils/ocr');
-const uploadImage = require('../utils/upload');
-const pool = require('../db'); // or your PostgreSQL pool
+const extractText = require('../utils/ocr');       // OCR function using tesseract.js
+const uploadImage = require('../utils/upload');    // Cloudinary uploader
+const pool = require('../db');                     // PostgreSQL connection
 
 const router = express.Router();
 
