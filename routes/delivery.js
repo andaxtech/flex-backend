@@ -29,13 +29,13 @@ router.post('/start-delivery', upload.single('photo'), async (req, res) => {
       phone_number = null
     } = typeof ocrResult === 'object' ? ocrResult : {};
 
-    // 🧠 Lookup store_id via block_claims → blocks → locations → store_id
+    // ✅ Get store_id from the most recent check-in
     const storeQuery = await pool.query(
       `SELECT l.store_id
        FROM check_ins ci
-       JOIN blocks b ON bc.block_id = b.block_id
+       JOIN blocks b ON ci.block_id = b.block_id
        JOIN locations l ON b.location_id = l.location_id
-       WHERE bc.driver_id = $1
+       WHERE ci.driver_id = $1
        ORDER BY ci.check_in_time DESC
        LIMIT 1`,
       [driver_id]
@@ -46,7 +46,7 @@ router.post('/start-delivery', upload.single('photo'), async (req, res) => {
     const result = await pool.query(
       `INSERT INTO delivery_logs 
         (driver_id, order_number, order_total, customer_name, slice_number, total_slices, order_type, payment_status, order_time, order_date, phone_number, store_id, delivery_photo_url, ocr_text, ocr_status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'parsed')
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'parsed')
        RETURNING *`,
       [
         driver_id,
