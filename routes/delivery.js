@@ -51,7 +51,7 @@ router.post('/start-delivery', upload.single('photo'), async (req, res) => {
       INSERT INTO delivery_logs 
         (driver_id, order_number, order_total, customer_name, slice_number, total_slices, order_type, payment_status, order_time, order_date, phone_number, store_id, delivery_photo_url, ocr_text, ocr_status)
       VALUES 
-        ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       RETURNING *;
     `;
 
@@ -68,7 +68,7 @@ router.post('/start-delivery', upload.single('photo'), async (req, res) => {
       order_date,
       phone_number,
       store_id,
-      imageUrl,
+      delivery_photo_url,
       JSON.stringify(ocrResult),
       'parsed'
     ]);
