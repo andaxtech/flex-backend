@@ -68,7 +68,7 @@ router.post('/start-delivery', upload.single('photo'), async (req, res) => {
       order_date,
       phone_number,
       store_id,
-      delivery_photo_url,
+      imageUrl,
       JSON.stringify(ocrResult),
       'parsed'
     ]);
