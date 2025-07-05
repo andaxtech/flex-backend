@@ -32,11 +32,11 @@ router.post('/start-delivery', upload.single('photo'), async (req, res) => {
     // 🧠 Lookup store_id via block_claims → blocks → locations → store_id
     const storeQuery = await pool.query(
       `SELECT l.store_id
-       FROM block_claims bc
+       FROM check_ins ci
        JOIN blocks b ON bc.block_id = b.block_id
        JOIN locations l ON b.location_id = l.location_id
        WHERE bc.driver_id = $1
-       ORDER BY bc.claim_time DESC
+       ORDER BY ci.check_in_time DESC
        LIMIT 1`,
       [driver_id]
     );
