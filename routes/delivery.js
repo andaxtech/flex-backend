@@ -36,7 +36,7 @@ router.post('/start-delivery', upload.single('photo'), async (req, res) => {
        JOIN blocks b ON bc.block_id = b.block_id
        JOIN locations l ON b.location_id = l.location_id
        WHERE bc.driver_id = $1
-       ORDER BY bc.claimed_at DESC
+       ORDER BY bc.claim_time DESC
        LIMIT 1`,
       [driver_id]
     );
