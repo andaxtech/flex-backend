@@ -29,21 +29,20 @@ router.post('/start-delivery', upload.single('photo'), async (req, res) => {
       phone_number = null
     } = typeof ocrResult === 'object' ? ocrResult : {};
 
-    // 🧠 Step 1: Lookup store_id via claimed_blocks and locations
+    // 🧠 Lookup store_id via block_claims → blocks → locations → store_id
     const storeQuery = await pool.query(
       `SELECT l.store_id
-       FROM claimed_blocks cb
-       JOIN blocks b ON cb.block_id = b.block_id
+       FROM block_claims bc
+       JOIN blocks b ON bc.block_id = b.block_id
        JOIN locations l ON b.location_id = l.location_id
-       WHERE cb.driver_id = $1
-       ORDER BY cb.claimed_at DESC
+       WHERE bc.driver_id = $1
+       ORDER BY bc.claimed_at DESC
        LIMIT 1`,
       [driver_id]
     );
 
     const store_id = storeQuery.rows[0]?.store_id || null;
 
-    // ✅ Step 2: Insert delivery log
     const result = await pool.query(
       `INSERT INTO delivery_logs 
         (driver_id, order_number, order_total, customer_name, slice_number, total_slices, order_type, payment_status, order_time, order_date, phone_number, store_id, delivery_photo_url, ocr_text, ocr_status)
