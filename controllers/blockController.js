@@ -1,4 +1,4 @@
-/ FLEX-BACKEND/controllers/blockController.js
+// FLEX-BACKEND/controllers/blockController.js
 const pool = require('../db');
 
 exports.claimBlock = async (req, res) => {
