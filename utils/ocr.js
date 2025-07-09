@@ -50,4 +50,13 @@ You are an OCR extraction engine reading Domino's pizza labels. From the image, 
     try {
       return JSON.parse(cleaned);
     } catch (err) {
-      console.warn('⚠
+      console.warn('Could not parse JSON, returning raw content');
+      return content;
+    }
+  } catch (err) {
+    console.error('OCR extraction failed:', err);
+    return null;
+  }
+}
+
+module.exports = extractText;
