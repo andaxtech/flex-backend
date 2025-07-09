@@ -31,7 +31,7 @@ You are an OCR extraction engine reading Domino's pizza labels. From the image, 
   "phone_number": "<if visible, formatted number like (123) 456-7890, else null>"
 }
 
-⚠️ Respond ONLY with a pure JSON object, no explanation or markdown.
+ Respond ONLY with a pure JSON object, no explanation or markdown.
               `,
             },
             {
