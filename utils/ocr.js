@@ -1,5 +1,4 @@
 require('dotenv').config();
-
 const { OpenAI } = require('openai');
 
 const openai = new OpenAI({
@@ -33,7 +32,7 @@ You are an OCR extraction engine reading Domino's pizza labels. From the image, 
 }
 
 ⚠️ Respond ONLY with a pure JSON object, no explanation or markdown.
-            `,
+              `,
             },
             {
               type: 'image_url',
@@ -45,21 +44,10 @@ You are an OCR extraction engine reading Domino's pizza labels. From the image, 
       max_tokens: 500,
     });
 
-    const content = response.choices[0]?.message?.content;
+    const content = response.choices[0]?.message?.content || '';
+    const cleaned = content.replace(/```(?:json)?/g, '').trim();
 
     try {
-      console.log('🔍 Raw OpenAI response:', content);
-      const cleaned = content.trim().replace(/^```json|^```|```$/g, '');
       return JSON.parse(cleaned);
-
     } catch (err) {
-      console.warn('⚠️ Could not parse JSON, returning raw content');
-      return content;
-    }
-  } catch (err) {
-    console.error('❌ OpenAI Vision failed:', err);
-    return '';
-  }
-}
-
-module.exports = extractText;
+      console.warn('⚠
