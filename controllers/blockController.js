@@ -212,9 +212,9 @@ exports.getClaimedBlocks = async (req, res) => {
         l.city,
         l.region,
         l.phone,
-        l.postal_code
+        l.postal_code,
         l.store_latitude,
-        l.store_latitude,
+        l.store_longitude
       FROM latest_claims lc
       INNER JOIN blocks b ON lc.block_id = b.block_id
       INNER JOIN locations l ON b.location_id = l.location_id
@@ -224,7 +224,7 @@ exports.getClaimedBlocks = async (req, res) => {
     const result = await pool.query(query, [driverIdInt]);
     const grouped = {};
     result.rows.forEach((row) => {
-      const date = row.date?.toISOString().split('T')[0];
+      const date = row.date ? row.date.toISOString().split('T')[0] : 'unknown';
       if (!grouped[date]) grouped[date] = [];
       grouped[date].push({
         block_id: row.block_id,
