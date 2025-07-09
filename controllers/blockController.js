@@ -214,10 +214,14 @@ exports.getClaimedBlocks = async (req, res) => {
         l.phone,
         l.postal_code,
         l.store_latitude,
-        l.store_longitude
+        l.store_longitude,
+        msl.manager_id,
+        m.first_name AS manager_first_name
       FROM latest_claims lc
       INNER JOIN blocks b ON lc.block_id = b.block_id
       INNER JOIN locations l ON b.location_id = l.location_id
+      LEFT JOIN manager_store_links msl ON l.store_id = msl.store_id
+      LEFT JOIN managers m ON msl.manager_id = m.manager_id
       ORDER BY b.date, b.start_time
     `;
 
@@ -242,7 +246,11 @@ exports.getClaimedBlocks = async (req, res) => {
           phone: row.phone,
           latitude: row.store_latitude,
           longitude: row.store_longitude
-        }
+        },
+          manager: row.manager_id ? {
+            managerId: row.manager_id,
+            firstName: row.manager_first_name
+        } : null
       });
     });
 
