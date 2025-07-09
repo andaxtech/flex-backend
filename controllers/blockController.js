@@ -178,6 +178,7 @@ exports.getAvailableBlocks = async (req, res) => {
   }
 };
 
+//get claimed blocks API
 exports.getClaimedBlocks = async (req, res) => {
   const { driver_id } = req.query;
   const driverIdInt = parseInt(driver_id);
@@ -212,6 +213,8 @@ exports.getClaimedBlocks = async (req, res) => {
         l.region,
         l.phone,
         l.postal_code
+        l.store_latitude,
+        l.store_latitude,
       FROM latest_claims lc
       INNER JOIN blocks b ON lc.block_id = b.block_id
       INNER JOIN locations l ON b.location_id = l.location_id
@@ -236,7 +239,9 @@ exports.getClaimedBlocks = async (req, res) => {
         store: {
           storeId: row.store_id,
           address: `${row.street_name}, ${row.city}, ${row.region} ${row.postal_code}`,
-          phone: row.phone
+          phone: row.phone,
+          latitude: row.store_latitude,
+          longitude: row.store_longitude
         }
       });
     });
