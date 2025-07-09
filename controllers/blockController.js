@@ -72,7 +72,7 @@ exports.unclaimBlock = async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    const blockResult = await client.query('SELECT start_time AT TIME ZONE \''UTC\'' AS start_time FROM blocks WHERE block_id = $1', [block_id]);
+    const blockResult = await client.query("SELECT start_time AT TIME ZONE 'UTC' AS start_time FROM blocks WHERE block_id = $1", [block_id]);
     if (blockResult.rowCount === 0) throw new Error('Block not found');
 
     const startTimeUtc = new Date(blockResult.rows[0].start_time);
