@@ -100,7 +100,7 @@ exports.unclaimBlock = async (req, res) => {
     client.release();
   }
 };
-
+// API to get available blocks
 exports.getAvailableBlocks = async (req, res) => {
   const { driver_id } = req.query;
   const driverIdInt = parseInt(driver_id);
@@ -147,6 +147,7 @@ exports.getAvailableBlocks = async (req, res) => {
         AND d.license_expiration > NOW()
         AND d.registration_expiration_date > NOW()
         AND i.end_date > NOW()
+        AND (b.date::timestamp + b.start_time::time) > NOW()
       ORDER BY b.date, b.start_time
     `;
 
