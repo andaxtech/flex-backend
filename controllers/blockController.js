@@ -82,12 +82,25 @@ exports.unclaimBlock = async (req, res) => {
     if (diffMinutes <= 60 && !override_penalty) {
       return res.status(400).json({ warning: true, message: 'Unclaiming now will impact your standing. Confirm to proceed.' });
     }
-
+    // 1. Fetch the claim_id before deleting
+const claimRes = await client.query(
+  `SELECT claim_id FROM block_claims WHERE block_id = $1 AND driver_id = $2`,
+  [block_id, driver_id]
+);
+const claimId = claimRes.rows.length > 0 ? claimRes.rows[0].claim_id : null;
+// 2. Delete the claim
     await client.query('DELETE FROM block_claims WHERE block_id = $1 AND driver_id = $2', [block_id, driver_id]);
+    // 3. Update the block status
     await client.query('UPDATE blocks SET status = $1 WHERE block_id = $2', ['available', block_id]);
-
+// 4. If late unclaim, log in pizza_points
     if (diffMinutes <= 60) {
-      await client.query('INSERT INTO driver_performance (driver_id, block_id, issue, created_at) VALUES ($1, $2, $3, NOW())', [driver_id, block_id, 'Late unclaim within 1 hour']);
+      await client.query(
+        `INSERT INTO pizza_points
+          (driver_id, event_type, points, event_time, block_id, claim_id)
+        VALUES
+          ($1, $2, $3, NOW(), $4, $5)`,
+       [driver_id, 'Forfeit within 60', -20, block_id, claimId]
+     );
     }
 
     await client.query('COMMIT');
