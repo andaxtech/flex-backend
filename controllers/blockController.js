@@ -51,7 +51,7 @@ exports.claimBlock = async (req, res) => {
       [block_id, driver_id]
     );
 
-    await client.query('UPDATE blocks SET status = $1 WHERE block_id = $2', ['claimed', block_id]);
+    await client.query('UPDATE blocks SET status = $1 WHERE block_id = $2', ['accepted', block_id]);
 
     await client.query('COMMIT');
     res.status(201).json({ success: true, message: 'Block claimed successfully', data: claimResult.rows[0] });
