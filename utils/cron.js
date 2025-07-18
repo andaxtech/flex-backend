@@ -4,12 +4,12 @@ const pool = require('../db');
 function startCronJobs() {
   cron.schedule('*/5 * * * *', async () => {
     try {
-      // 1. Expire unclaimed blocks that have already started
+      // 1. Expire unclaimed blocks that have already started (using correct UTC logic)
       await pool.query(`
         UPDATE blocks
         SET status = 'expired'
         WHERE status = 'available'
-          AND (date::timestamp + start_time::time) < NOW()
+          AND ((date::timestamp + start_time::time)::timestamptz AT TIME ZONE 'UTC') < NOW()
           AND block_id NOT IN (
             SELECT block_id FROM block_claims
           );
