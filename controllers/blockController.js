@@ -47,10 +47,17 @@ exports.claimBlock = async (req, res) => {
     }
 
     const claimResult = await client.query(
-      'INSERT INTO block_claims (block_id, driver_id, claim_time) VALUES ($1, $2, NOW()) RETURNING *',
-      [block_id, driver_id]
+      'INSERT INTO block_claims (block_id, driver_id, claim_time, status) VALUES ($1, $2, NOW(), $3) RETURNING *',
+      [block_id, driver_id, 'accepted']
     );
 
+    // NEW: Update block_claims status to accepted (defensive, in case you want explicit update)
+    // You could technically skip this if you set it in the INSERT, but if you want to ensure status gets set:
+    // const claimId = claimResult.rows[0].claim_id;
+    // await client.query(
+    //   'UPDATE block_claims SET status = $1 WHERE claim_id = $2',
+    //   ['accepted', claimId]
+    // );
     await client.query('UPDATE blocks SET status = $1 WHERE block_id = $2', ['accepted', block_id]);
 
     await client.query('COMMIT');
