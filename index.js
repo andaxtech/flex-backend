@@ -10,8 +10,8 @@ const driverRoutes = require('./routes/drivers');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const { startCronJobs } = require('./utils/cron');
-startCronJobs();
+//const { startCronJobs } = require('./utils/cron');               Stop the cron job- we cannot do this based on server timezone
+//startCronJobs();                                                  Stop the cron job- we cannot do this based on server timezone
 
 
 // Middleware
