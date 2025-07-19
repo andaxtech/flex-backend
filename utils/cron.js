@@ -1,3 +1,4 @@
+//we are not using this cron job- if you want to renable, you can go to index.js on this folder and remove the comments to re-enable.
 const cron = require('node-cron');
 const pool = require('../db');
 
