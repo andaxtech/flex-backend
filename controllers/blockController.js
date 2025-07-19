@@ -28,18 +28,18 @@ exports.claimBlock = async (req, res) => {
     );
 
     let overlapCount = 0;
-    for (const row of existingClaims.rows) {
-      const claimedStart = new Date(row.start_time);
-      const claimedEnd = new Date(row.end_time);
+for (const row of existingClaims.rows) {
+  const claimedStart = new Date(row.start_time);
+  const claimedEnd = new Date(row.end_time);
 
-      const isOverlap = newStart <= claimedEnd && newEnd >= claimedStart;
-      if (isOverlap) {
-        overlapCount += 1;
-        if (overlapCount > 1) {
-          throw new Error('You are allowed to accept overlapping blocks only once a day.');
-        }
-      }
-    }
+  const isOverlap = newStart <= claimedEnd && newEnd >= claimedStart;
+  if (isOverlap) overlapCount += 1;
+}
+
+if (overlapCount > 0) {
+  throw new Error('You are allowed to accept overlapping blocks only once a day.');
+}
+
 
     const dupCheck = await client.query('SELECT 1 FROM block_claims WHERE block_id = $1', [block_id]);
     if (dupCheck.rowCount > 0) {
