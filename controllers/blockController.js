@@ -387,6 +387,8 @@ exports.getAvailableBlocks = async (req, res) => {
         l.region,
         l.phone,
         l.postal_code,
+        l.store_latitude,
+        l.store_longitude,
         l.time_zone_code,
         d.license_expiration,
         d.registration_expiration_date,
@@ -435,6 +437,8 @@ exports.getAvailableBlocks = async (req, res) => {
             storeId: row.store_id,
             address: `${row.street_name}, ${row.city}, ${row.region} ${row.postal_code}`,
             phone: row.phone,
+            latitude: row.store_latitude,
+            longitude: row.store_longitude,
             timeZoneCode: row.time_zone_code // Added store timezone to store object
           }
         });
