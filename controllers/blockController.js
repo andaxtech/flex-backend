@@ -569,3 +569,135 @@ exports.getClaimedBlocks = async (req, res) => {
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
+
+
+
+// Backend API endpoint to update expired blocks
+// Add this to your Express.js routes file
+
+// POST /api/blocks/update-expired
+app.post('/api/blocks/update-expired', async (req, res) => {
+  try {
+    const { blockIds, status } = req.body;
+
+    // Validate input
+    if (!blockIds || !Array.isArray(blockIds) || blockIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'blockIds must be a non-empty array'
+      });
+    }
+
+    if (!status || status !== 'expired') {
+      return res.status(400).json({
+        success: false,
+        error: 'status must be "expired"'
+      });
+    }
+
+    console.log(`🕒 Updating ${blockIds.length} blocks to expired status:`, blockIds);
+
+    // Update blocks in database
+    // Replace 'your_db_connection' with your actual database connection/query method
+    const updateQuery = `
+      UPDATE blocks 
+      SET status = ? 
+      WHERE block_id IN (${blockIds.map(() => '?').join(',')})
+      AND status != 'expired'
+    `;
+
+    const queryParams = [status, ...blockIds];
+    
+    // Execute the query (adjust this based on your database setup)
+    // Example for MySQL/SQLite with a connection pool:
+    const result = await db.query(updateQuery, queryParams);
+    
+    // Example for PostgreSQL with pool:
+    // const result = await pool.query(updateQuery, queryParams);
+    
+    console.log(`✅ Successfully updated ${result.affectedRows || result.rowCount || 0} blocks to expired status`);
+
+    res.json({
+      success: true,
+      updatedCount: result.affectedRows || result.rowCount || 0,
+      message: `Successfully marked ${blockIds.length} blocks as expired`
+    });
+
+  } catch (error) {
+    console.error('❌ Error updating expired blocks:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update expired blocks',
+      details: error.message
+    });
+  }
+});
+
+
+
+// controllers/blockController.js
+// Add this function to your existing blockController.js file
+//to update expired blocks at refresh on Avilableblocks table
+
+const updateExpiredBlocks = async (req, res) => {
+  try {
+    const { blockIds, status } = req.body;
+
+    // Validate input
+    if (!blockIds || !Array.isArray(blockIds) || blockIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'blockIds must be a non-empty array'
+      });
+    }
+
+    if (!status || status !== 'expired') {
+      return res.status(400).json({
+        success: false,
+        error: 'status must be "expired"'
+      });
+    }
+
+    console.log(`🕒 Updating ${blockIds.length} blocks to expired status:`, blockIds);
+
+    // Update blocks in database
+    const updateQuery = `
+      UPDATE blocks 
+      SET status = ? 
+      WHERE block_id IN (${blockIds.map(() => '?').join(',')})
+      AND status != 'expired'
+    `;
+
+    const queryParams = [status, ...blockIds];
+    
+    // Execute the query (adjust this based on your database setup)
+    // Replace 'db' with your actual database connection
+    const result = await db.query(updateQuery, queryParams);
+    
+    const updatedCount = result.affectedRows || result.rowCount || 0;
+    console.log(`✅ Successfully updated ${updatedCount} blocks to expired status`);
+
+    res.json({
+      success: true,
+      updatedCount: updatedCount,
+      message: `Successfully marked ${blockIds.length} blocks as expired`
+    });
+
+  } catch (error) {
+    console.error('❌ Error updating expired blocks:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update expired blocks',
+      details: error.message
+    });
+  }
+};
+
+// At the bottom of controllers/blockController.js
+module.exports = {
+  getAvailableBlocks,
+  getClaimedBlocks, 
+  claimBlock,
+  unclaimBlock,
+  updateExpiredBlocks  // <- Add this new function
+};
