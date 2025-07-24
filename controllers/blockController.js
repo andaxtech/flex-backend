@@ -616,11 +616,3 @@ exports.updateExpiredBlocks = async (req, res) => {
     });
   }
 };
-
-module.exports = {
-  getAvailableBlocks,
-  getClaimedBlocks, 
-  claimBlock,
-  unclaimBlock,
-  updateExpiredBlocks
-};

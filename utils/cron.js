@@ -1,38 +1,53 @@
-//we are not using this cron job- if you want to renable, you can go to index.js on this folder and remove the comments to re-enable.
-/*
+// utils/cron.js
 const cron = require('node-cron');
 const pool = require('../db');
 
-function startCronJobs() {
-  cron.schedule('*/5 * * * *', async () => {
-    try {
-      // 1. Expire unclaimed blocks that have already started (using correct UTC logic)
-      await pool.query(`
-        UPDATE blocks
-        SET status = 'expired'
-        WHERE status = 'available'
-          AND ((date::timestamp + start_time::time)::timestamptz AT TIME ZONE 'UTC') < NOW()
-          AND block_id NOT IN (
-            SELECT block_id FROM block_claims
-          );
-      `);
-
-      // 2. Set related block_claims status to expired
-      await pool.query(`
-        UPDATE block_claims
-        SET status = 'expired',
-            service_status = 'expired'
-        WHERE block_id IN (
-          SELECT block_id FROM blocks WHERE status = 'expired'
-        )
-        AND status != 'expired';
-      `);
-
-      console.log('✅ Expired blocks and claims updated!');
-    } catch (err) {
-      console.error('❌ Error updating expired blocks/claims:', err);
+// Function to update expired blocks
+const updateExpiredBlocks = async () => {
+  try {
+    console.log('🕒 Running expired blocks cleanup job...');
+    
+    // Update blocks where start_time has passed and status is still 'available'
+    const result = await pool.query(`
+      UPDATE blocks 
+      SET status = 'expired' 
+      WHERE start_time < NOW() 
+      AND status = 'available'
+    `);
+    
+    const updatedCount = result.rowCount || 0;
+    
+    if (updatedCount > 0) {
+      console.log(`✅ Marked ${updatedCount} blocks as expired`);
+    } else {
+      console.log('📊 No blocks needed to be marked as expired');
     }
+    
+    return updatedCount;
+  } catch (error) {
+    console.error('❌ Error in expired blocks cleanup job:', error);
+  }
+};
+
+// Schedule job to run every 5 minutes
+const startCronJobs = () => {
+  // Runs every 5 minutes: "*/5 * * * *"
+  cron.schedule('*/5 * * * *', updateExpiredBlocks, {
+    scheduled: true,
+    timezone: "UTC"
   });
-}
-module.exports = { startCronJobs };
-*/
+  
+  console.log('📅 Expired blocks cleanup job scheduled (every 5 minutes)');
+};
+
+// Run once on startup to clean up any existing expired blocks
+const runInitialCleanup = async () => {
+  console.log('🚀 Running initial expired blocks cleanup...');
+  await updateExpiredBlocks();
+};
+
+module.exports = {
+  startCronJobs,
+  runInitialCleanup,
+  updateExpiredBlocks
+};

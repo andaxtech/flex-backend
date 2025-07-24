@@ -8,11 +8,11 @@ const blockRoutes = require('./routes/blocks');
 const deliveryRoutes = require('./routes/delivery');
 const driverRoutes = require('./routes/drivers');
 
+// Import the cron job utilities
+const { startCronJobs, runInitialCleanup } = require('./utils/cron');
+
 const app = express();
 const PORT = process.env.PORT || 5000;
-//const { startCronJobs } = require('./utils/cron');               Stop the cron job- we cannot do this based on server timezone
-//startCronJobs();                                                  Stop the cron job- we cannot do this based on server timezone
-
 
 // Middleware
 app.use(cors());
@@ -42,6 +42,12 @@ app.use((err, req, res, next) => {
 });
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`✅ Server is running on port ${PORT}`);
+  
+  // Start the cron jobs
+  startCronJobs();
+  
+  // Run initial cleanup
+  await runInitialCleanup();
 });
