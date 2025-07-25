@@ -347,7 +347,7 @@ exports.unclaimBlock = async (req, res) => {
   }
 };
 
-// API to get available blocks - with IANA timezone support
+/ API to get available blocks - with IANA timezone support
 exports.getAvailableBlocks = async (req, res) => {
   const { driver_id } = req.query;
   const driverIdInt = parseInt(driver_id);
@@ -375,7 +375,7 @@ exports.getAvailableBlocks = async (req, res) => {
         b.status,
         b.location_id,
         b.device_time_zone_name,  -- IANA timezone from blocks table
-        b.device_timezone_offset, -- Device offset from blocks table
+        b.device_timezone_offset, -- Device offset from blocks table (e.g., "-07:00")
         lc.claim_id,
         l.store_id,
         l.street_name,
@@ -385,7 +385,7 @@ exports.getAvailableBlocks = async (req, res) => {
         l.postal_code,
         l.store_latitude,
         l.store_longitude,
-        l.time_zone_code,         -- Store's fixed offset
+        l.time_zone_code,         -- Store's fixed offset (e.g., "GMT-08:00")
         d.license_expiration,
         d.registration_expiration_date,
         i.end_date AS insurance_end
@@ -417,9 +417,13 @@ exports.getAvailableBlocks = async (req, res) => {
         const startTimeISO = row.start_time instanceof Date ? row.start_time.toISOString() : row.start_time;
         const endTimeISO = row.end_time instanceof Date ? row.end_time.toISOString() : row.end_time;
         
-        // Use IANA timezone if available, otherwise fall back to store timezone
-        const timeZoneName = row.device_time_zone_name || null;
-        const timeZoneOffset = row.device_timezone_offset || row.time_zone_code;
+        // Use the block's device_timezone_offset if available, with GMT prefix
+        let blockTimezoneOffset = row.device_timezone_offset || row.time_zone_code;
+        
+        // Ensure GMT prefix for consistency
+        if (blockTimezoneOffset && !blockTimezoneOffset.startsWith('GMT')) {
+          blockTimezoneOffset = `GMT${blockTimezoneOffset}`;
+        }
         
         blocksList.push({
           block_id: row.block_id,
@@ -429,7 +433,7 @@ exports.getAvailableBlocks = async (req, res) => {
           locationId: row.location_id,
           city: row.city,
           region: row.region,
-          timeZoneCode: timeZoneOffset,     // For backward compatibility
+          timeZoneCode: blockTimezoneOffset,     // Use block's timezone, not store's
           timeZoneName: timeZoneName,       // IANA timezone (e.g., "America/Los_Angeles")
           store: {
             storeId: row.store_id,
@@ -437,7 +441,7 @@ exports.getAvailableBlocks = async (req, res) => {
             phone: row.phone,
             latitude: row.store_latitude,
             longitude: row.store_longitude,
-            timeZoneCode: row.time_zone_code,    // Store's fixed offset
+            timeZoneCode: row.time_zone_code,    // Store's fixed offset for reference
             timeZoneName: timeZoneName            // IANA timezone from block creation
           }
         });
