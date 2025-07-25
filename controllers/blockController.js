@@ -347,8 +347,7 @@ exports.unclaimBlock = async (req, res) => {
   }
 };
 
-// API to get available blocks- new version
-// Fixed getAvailableBlocks function
+// API to get available blocks - with IANA timezone support
 exports.getAvailableBlocks = async (req, res) => {
   const { driver_id } = req.query;
   const driverIdInt = parseInt(driver_id);
@@ -375,6 +374,8 @@ exports.getAvailableBlocks = async (req, res) => {
         b.amount,
         b.status,
         b.location_id,
+        b.device_time_zone_name,  -- IANA timezone from blocks table
+        b.device_timezone_offset, -- Device offset from blocks table
         lc.claim_id,
         l.store_id,
         l.street_name,
@@ -384,7 +385,7 @@ exports.getAvailableBlocks = async (req, res) => {
         l.postal_code,
         l.store_latitude,
         l.store_longitude,
-        l.time_zone_code,
+        l.time_zone_code,         -- Store's fixed offset
         d.license_expiration,
         d.registration_expiration_date,
         i.end_date AS insurance_end
@@ -416,7 +417,10 @@ exports.getAvailableBlocks = async (req, res) => {
         const startTimeISO = row.start_time instanceof Date ? row.start_time.toISOString() : row.start_time;
         const endTimeISO = row.end_time instanceof Date ? row.end_time.toISOString() : row.end_time;
         
-        // Don't use the date field for grouping - let frontend handle it based on timezone
+        // Use IANA timezone if available, otherwise fall back to store timezone
+        const timeZoneName = row.device_time_zone_name || null;
+        const timeZoneOffset = row.device_timezone_offset || row.time_zone_code;
+        
         blocksList.push({
           block_id: row.block_id,
           startTime: startTimeISO,
@@ -425,14 +429,16 @@ exports.getAvailableBlocks = async (req, res) => {
           locationId: row.location_id,
           city: row.city,
           region: row.region,
-          timeZoneCode: row.time_zone_code,
+          timeZoneCode: timeZoneOffset,     // For backward compatibility
+          timeZoneName: timeZoneName,       // IANA timezone (e.g., "America/Los_Angeles")
           store: {
             storeId: row.store_id,
             address: `${row.street_name}, ${row.city}, ${row.region} ${row.postal_code}`,
             phone: row.phone,
             latitude: row.store_latitude,
             longitude: row.store_longitude,
-            timeZoneCode: row.time_zone_code
+            timeZoneCode: row.time_zone_code,    // Store's fixed offset
+            timeZoneName: timeZoneName            // IANA timezone from block creation
           }
         });
       } catch (error) {
@@ -440,17 +446,13 @@ exports.getAvailableBlocks = async (req, res) => {
       }
     });
 
-    // Return flat array and let frontend group by date based on store timezone
     console.log(`Returning ${blocksList.length} available blocks for driver ${driverIdInt}`);
     
-    // For backward compatibility, we'll still group by date but use a temporary structure
-    // The frontend is already ignoring this grouping and re-grouping based on timezone
-    const tempGrouped = { 'all': blocksList };
-    
+    // Return both formats for compatibility
     res.json({ 
       success: true, 
-      blocksByDate: tempGrouped,
-      blocks: blocksList // Also send flat array for easier processing
+      blocksByDate: { 'all': blocksList }, // For backward compatibility
+      blocks: blocksList // Flat array for easier processing
     });
   } catch (err) {
     console.error('❌ Error fetching available blocks for driver:', err);
@@ -458,7 +460,7 @@ exports.getAvailableBlocks = async (req, res) => {
   }
 };
 
-//get claimed blocks API- New Version
+// Get claimed blocks API - with IANA timezone support
 exports.getClaimedBlocks = async (req, res) => {
   const { driver_id } = req.query;
   const driverIdInt = parseInt(driver_id);
@@ -486,6 +488,8 @@ exports.getClaimedBlocks = async (req, res) => {
         b.amount,
         b.status,
         b.location_id,
+        b.device_time_zone_name,  -- IANA timezone from blocks table
+        b.device_timezone_offset, -- Device offset from blocks table
         lc.claim_time,
         l.store_id,
         l.street_name,
@@ -495,7 +499,7 @@ exports.getClaimedBlocks = async (req, res) => {
         l.postal_code,
         l.store_latitude,
         l.store_longitude,
-        l.time_zone_code,
+        l.time_zone_code,         -- Store's fixed offset
         COALESCE(
           json_agg(
             DISTINCT jsonb_build_object(
@@ -512,21 +516,18 @@ exports.getClaimedBlocks = async (req, res) => {
       LEFT JOIN managers m ON msl.manager_id = m.manager_id
       GROUP BY
        b.block_id, b.date, b.start_time, b.end_time, b.amount, b.status,
-       b.location_id, lc.claim_time,
+       b.location_id, b.device_time_zone_name, b.device_timezone_offset,
+       lc.claim_time,
        l.store_id, l.street_name, l.city, l.region, l.phone, l.postal_code,
        l.store_latitude, l.store_longitude, l.time_zone_code
-
-      ORDER BY b.date, b.start_time
+      ORDER BY b.start_time
     `;
 
     const result = await pool.query(query, [driverIdInt]);
-    const grouped = {};
+    const blocksList = [];
     
     result.rows.forEach((row) => {
       try {
-        const date = row.date ? row.date.toISOString().split('T')[0] : 'unknown';
-        if (!grouped[date]) grouped[date] = [];
-        
         // Validate timestamps
         const startTimeISO = row.start_time?.toISOString() || null;
         const endTimeISO = row.end_time?.toISOString() || null;
@@ -537,7 +538,11 @@ exports.getClaimedBlocks = async (req, res) => {
           return;
         }
         
-        grouped[date].push({
+        // Use IANA timezone if available
+        const timeZoneName = row.device_time_zone_name || null;
+        const timeZoneOffset = row.device_timezone_offset || row.time_zone_code;
+        
+        blocksList.push({
           block_id: row.block_id,
           startTime: startTimeISO,
           endTime: endTimeISO,
@@ -547,14 +552,16 @@ exports.getClaimedBlocks = async (req, res) => {
           locationId: row.location_id,
           city: row.city,
           region: row.region,
-          timeZoneCode: row.time_zone_code, // Added store timezone
+          timeZoneCode: timeZoneOffset,     // For backward compatibility
+          timeZoneName: timeZoneName,       // IANA timezone
           store: {
             storeId: row.store_id,
             address: `${row.street_name}, ${row.city}, ${row.region} ${row.postal_code}`,
             phone: row.phone,
             latitude: row.store_latitude,
             longitude: row.store_longitude,
-            timeZoneCode: row.time_zone_code // Added store timezone to store object
+            timeZoneCode: row.time_zone_code,    // Store's fixed offset
+            timeZoneName: timeZoneName            // IANA timezone from block creation
           },
           managers: row.managers
         });
@@ -563,8 +570,48 @@ exports.getClaimedBlocks = async (req, res) => {
       }
     });
 
-    console.log(`Returning ${Object.keys(grouped).length} dates with claimed blocks for driver ${driverIdInt}`);
-    res.json({ success: true, blocksByDate: grouped });
+    // Group by date using IANA timezone for accurate grouping
+    const grouped = {};
+    
+    blocksList.forEach(block => {
+      try {
+        let dateKey;
+        
+        // Use IANA timezone for accurate date grouping if available
+        if (block.timeZoneName) {
+          const startDate = new Date(block.startTime);
+          // This formats the date in the block's timezone
+          dateKey = startDate.toLocaleDateString('en-CA', { 
+            timeZone: block.timeZoneName,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+          });
+        } else {
+          // Fallback to UTC date if no timezone info
+          dateKey = block.startTime.split('T')[0];
+        }
+        
+        if (!grouped[dateKey]) grouped[dateKey] = [];
+        grouped[dateKey].push(block);
+      } catch (error) {
+        console.error('Error grouping block by date:', error, block);
+      }
+    });
+
+    // Sort dates
+    const sortedGrouped = {};
+    Object.keys(grouped).sort().forEach(date => {
+      sortedGrouped[date] = grouped[date];
+    });
+
+    console.log(`Returning ${Object.keys(sortedGrouped).length} dates with claimed blocks for driver ${driverIdInt}`);
+    
+    res.json({ 
+      success: true, 
+      blocksByDate: sortedGrouped,
+      claimedBlocks: blocksList  // Also send flat array
+    });
   } catch (err) {
     console.error('❌ Error fetching claimed blocks for driver:', err);
     res.status(500).json({ success: false, message: 'Internal server error' });
