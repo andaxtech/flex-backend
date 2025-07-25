@@ -348,6 +348,7 @@ exports.unclaimBlock = async (req, res) => {
 };
 
 // API to get available blocks- new version
+// Fixed getAvailableBlocks function
 exports.getAvailableBlocks = async (req, res) => {
   const { driver_id } = req.query;
   const driverIdInt = parseInt(driver_id);
@@ -398,17 +399,14 @@ exports.getAvailableBlocks = async (req, res) => {
         AND d.registration_expiration_date > NOW()
         AND i.end_date > NOW()
         AND b.start_time > NOW()
-      ORDER BY b.date, b.start_time
+      ORDER BY b.start_time
     `;
 
     const result = await pool.query(query, [driverIdInt]);
-    const grouped = {};
+    const blocksList = [];
     
     result.rows.forEach((row) => {
       try {
-        const dateKey = row.date.toISOString().split('T')[0];
-        if (!grouped[dateKey]) grouped[dateKey] = [];
-        
         // Ensure start_time and end_time are valid
         if (!row.start_time || !row.end_time) {
           console.warn('Block missing time data:', row.block_id);
@@ -418,7 +416,8 @@ exports.getAvailableBlocks = async (req, res) => {
         const startTimeISO = row.start_time instanceof Date ? row.start_time.toISOString() : row.start_time;
         const endTimeISO = row.end_time instanceof Date ? row.end_time.toISOString() : row.end_time;
         
-        grouped[dateKey].push({
+        // Don't use the date field for grouping - let frontend handle it based on timezone
+        blocksList.push({
           block_id: row.block_id,
           startTime: startTimeISO,
           endTime: endTimeISO,
@@ -426,14 +425,14 @@ exports.getAvailableBlocks = async (req, res) => {
           locationId: row.location_id,
           city: row.city,
           region: row.region,
-          timeZoneCode: row.time_zone_code, // Added store timezone
+          timeZoneCode: row.time_zone_code,
           store: {
             storeId: row.store_id,
             address: `${row.street_name}, ${row.city}, ${row.region} ${row.postal_code}`,
             phone: row.phone,
             latitude: row.store_latitude,
             longitude: row.store_longitude,
-            timeZoneCode: row.time_zone_code // Added store timezone to store object
+            timeZoneCode: row.time_zone_code
           }
         });
       } catch (error) {
@@ -441,8 +440,18 @@ exports.getAvailableBlocks = async (req, res) => {
       }
     });
 
-    console.log(`Returning ${Object.keys(grouped).length} dates with available blocks for driver ${driverIdInt}`);
-    res.json({ success: true, blocksByDate: grouped });
+    // Return flat array and let frontend group by date based on store timezone
+    console.log(`Returning ${blocksList.length} available blocks for driver ${driverIdInt}`);
+    
+    // For backward compatibility, we'll still group by date but use a temporary structure
+    // The frontend is already ignoring this grouping and re-grouping based on timezone
+    const tempGrouped = { 'all': blocksList };
+    
+    res.json({ 
+      success: true, 
+      blocksByDate: tempGrouped,
+      blocks: blocksList // Also send flat array for easier processing
+    });
   } catch (err) {
     console.error('❌ Error fetching available blocks for driver:', err);
     res.status(500).json({ success: false, message: 'Internal server error' });
