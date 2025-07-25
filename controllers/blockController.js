@@ -348,6 +348,7 @@ exports.unclaimBlock = async (req, res) => {
 };
 
 // API to get available blocks - with IANA timezone support
+// API to get available blocks - with eligibility check and specific error messages
 exports.getAvailableBlocks = async (req, res) => {
   const { driver_id } = req.query;
   const driverIdInt = parseInt(driver_id);
@@ -357,7 +358,114 @@ exports.getAvailableBlocks = async (req, res) => {
   }
 
   try {
-    const query = `
+    // First, check driver eligibility
+    const eligibilityQuery = `
+      WITH valid_insurance AS (
+        SELECT 
+          driver_id,
+          MAX(end_date) as latest_insurance_end
+        FROM insurance_details
+        WHERE driver_id = $1
+        GROUP BY driver_id
+      )
+      SELECT 
+        d.driver_id,
+        d.license_expiration,
+        d.registration_expiration_date,
+        vi.latest_insurance_end,
+        CASE 
+          WHEN d.license_expiration <= NOW() THEN 'expired'
+          WHEN d.license_expiration <= NOW() + INTERVAL '30 days' THEN 'expiring_soon'
+          ELSE 'valid'
+        END as license_status,
+        CASE 
+          WHEN d.registration_expiration_date <= NOW() THEN 'expired'
+          WHEN d.registration_expiration_date <= NOW() + INTERVAL '30 days' THEN 'expiring_soon'
+          ELSE 'valid'
+        END as registration_status,
+        CASE 
+          WHEN vi.latest_insurance_end IS NULL OR vi.latest_insurance_end <= NOW() THEN 'expired'
+          WHEN vi.latest_insurance_end <= NOW() + INTERVAL '30 days' THEN 'expiring_soon'
+          ELSE 'valid'
+        END as insurance_status
+      FROM drivers d
+      LEFT JOIN valid_insurance vi ON d.driver_id = vi.driver_id
+      WHERE d.driver_id = $1
+    `;
+
+    const eligibilityResult = await pool.query(eligibilityQuery, [driverIdInt]);
+    
+    if (eligibilityResult.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Driver not found' 
+      });
+    }
+
+    const driverStatus = eligibilityResult.rows[0];
+    const ineligibilityReasons = [];
+    const warnings = [];
+
+    // Check for expired credentials
+    if (driverStatus.license_status === 'expired') {
+      ineligibilityReasons.push({
+        type: 'license',
+        message: `Your driver's license expired on ${new Date(driverStatus.license_expiration).toLocaleDateString()}`,
+        expiredDate: driverStatus.license_expiration
+      });
+    } else if (driverStatus.license_status === 'expiring_soon') {
+      warnings.push({
+        type: 'license',
+        message: `Your driver's license expires on ${new Date(driverStatus.license_expiration).toLocaleDateString()}`,
+        expiryDate: driverStatus.license_expiration
+      });
+    }
+
+    if (driverStatus.registration_status === 'expired') {
+      ineligibilityReasons.push({
+        type: 'registration',
+        message: `Your vehicle registration expired on ${new Date(driverStatus.registration_expiration_date).toLocaleDateString()}`,
+        expiredDate: driverStatus.registration_expiration_date
+      });
+    } else if (driverStatus.registration_status === 'expiring_soon') {
+      warnings.push({
+        type: 'registration',
+        message: `Your vehicle registration expires on ${new Date(driverStatus.registration_expiration_date).toLocaleDateString()}`,
+        expiryDate: driverStatus.registration_expiration_date
+      });
+    }
+
+    if (driverStatus.insurance_status === 'expired') {
+      ineligibilityReasons.push({
+        type: 'insurance',
+        message: driverStatus.latest_insurance_end 
+          ? `Your insurance expired on ${new Date(driverStatus.latest_insurance_end).toLocaleDateString()}`
+          : 'No valid insurance on file',
+        expiredDate: driverStatus.latest_insurance_end
+      });
+    } else if (driverStatus.insurance_status === 'expiring_soon' && driverStatus.latest_insurance_end) {
+      warnings.push({
+        type: 'insurance',
+        message: `Your insurance expires on ${new Date(driverStatus.latest_insurance_end).toLocaleDateString()}`,
+        expiryDate: driverStatus.latest_insurance_end
+      });
+    }
+
+    // If driver is ineligible, return specific error message
+    if (ineligibilityReasons.length > 0) {
+      return res.json({
+        success: false,
+        eligible: false,
+        ineligibilityReasons,
+        warnings,
+        message: 'You are not eligible to view blocks due to expired credentials. Please update your records to participate.',
+        blocks: [],
+        blocksByDate: { 'all': [] }
+      });
+    }
+
+    // If eligible, proceed with fetching blocks
+    const blocksQuery = `
       WITH latest_claims AS (
         SELECT * FROM (
           SELECT claim_id, block_id, driver_id, claim_time,
@@ -374,8 +482,8 @@ exports.getAvailableBlocks = async (req, res) => {
         b.amount,
         b.status,
         b.location_id,
-        b.device_time_zone_name,  -- IANA timezone from blocks table
-        b.device_timezone_offset, -- Device offset from blocks table (e.g., "-07:00")
+        b.device_time_zone_name,
+        b.device_timezone_offset,
         lc.claim_id,
         l.store_id,
         l.street_name,
@@ -385,30 +493,21 @@ exports.getAvailableBlocks = async (req, res) => {
         l.postal_code,
         l.store_latitude,
         l.store_longitude,
-        l.time_zone_code,         -- Store's fixed offset (e.g., "GMT-08:00")
-        d.license_expiration,
-        d.registration_expiration_date,
-        i.end_date AS insurance_end
+        l.time_zone_code
       FROM blocks AS b
       LEFT JOIN latest_claims lc ON b.block_id = lc.block_id
       INNER JOIN locations l ON b.location_id = l.location_id
-      INNER JOIN drivers d ON d.driver_id = $1
-      LEFT JOIN insurance_details i ON d.driver_id = i.driver_id
       WHERE b.status = 'available'
         AND lc.claim_id IS NULL
-        AND d.license_expiration > NOW()
-        AND d.registration_expiration_date > NOW()
-        AND i.end_date > NOW()
         AND b.start_time > NOW()
       ORDER BY b.start_time
     `;
 
-    const result = await pool.query(query, [driverIdInt]);
+    const result = await pool.query(blocksQuery);
     const blocksList = [];
     
     result.rows.forEach((row) => {
       try {
-        // Ensure start_time and end_time are valid
         if (!row.start_time || !row.end_time) {
           console.warn('Block missing time data:', row.block_id);
           return;
@@ -417,13 +516,13 @@ exports.getAvailableBlocks = async (req, res) => {
         const startTimeISO = row.start_time instanceof Date ? row.start_time.toISOString() : row.start_time;
         const endTimeISO = row.end_time instanceof Date ? row.end_time.toISOString() : row.end_time;
         
-        // Use the block's device_timezone_offset if available, with GMT prefix
         let blockTimezoneOffset = row.device_timezone_offset || row.time_zone_code;
         
-        // Ensure GMT prefix for consistency
         if (blockTimezoneOffset && !blockTimezoneOffset.startsWith('GMT')) {
           blockTimezoneOffset = `GMT${blockTimezoneOffset}`;
         }
+        
+        const timeZoneName = row.device_time_zone_name || null;
         
         blocksList.push({
           block_id: row.block_id,
@@ -433,16 +532,16 @@ exports.getAvailableBlocks = async (req, res) => {
           locationId: row.location_id,
           city: row.city,
           region: row.region,
-          timeZoneCode: blockTimezoneOffset,     // Use block's timezone, not store's
-          timeZoneName: timeZoneName,       // IANA timezone (e.g., "America/Los_Angeles")
+          timeZoneCode: blockTimezoneOffset,
+          timeZoneName: timeZoneName,
           store: {
             storeId: row.store_id,
             address: `${row.street_name}, ${row.city}, ${row.region} ${row.postal_code}`,
             phone: row.phone,
             latitude: row.store_latitude,
             longitude: row.store_longitude,
-            timeZoneCode: row.time_zone_code,    // Store's fixed offset for reference
-            timeZoneName: timeZoneName            // IANA timezone from block creation
+            timeZoneCode: row.time_zone_code,
+            timeZoneName: timeZoneName
           }
         });
       } catch (error) {
@@ -452,11 +551,12 @@ exports.getAvailableBlocks = async (req, res) => {
 
     console.log(`Returning ${blocksList.length} available blocks for driver ${driverIdInt}`);
     
-    // Return both formats for compatibility
     res.json({ 
-      success: true, 
-      blocksByDate: { 'all': blocksList }, // For backward compatibility
-      blocks: blocksList // Flat array for easier processing
+      success: true,
+      eligible: true,
+      warnings, // Include any expiring soon warnings
+      blocksByDate: { 'all': blocksList },
+      blocks: blocksList
     });
   } catch (err) {
     console.error('❌ Error fetching available blocks for driver:', err);
