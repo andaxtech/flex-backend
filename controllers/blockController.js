@@ -347,7 +347,7 @@ exports.unclaimBlock = async (req, res) => {
   }
 };
 
-/ API to get available blocks - with IANA timezone support
+// API to get available blocks - with IANA timezone support
 exports.getAvailableBlocks = async (req, res) => {
   const { driver_id } = req.query;
   const driverIdInt = parseInt(driver_id);
