@@ -622,25 +622,6 @@ exports.getClaimedBlocks = async (req, res) => {
   }
 };
 
-    // Sort dates
-    const sortedGrouped = {};
-    Object.keys(grouped).sort().forEach(date => {
-      sortedGrouped[date] = grouped[date];
-    });
-
-    console.log(`Returning ${Object.keys(sortedGrouped).length} dates with claimed blocks for driver ${driverIdInt}`);
-    
-    res.json({ 
-      success: true, 
-      blocksByDate: sortedGrouped,
-      claimedBlocks: blocksList  // Also send flat array
-    });
-  } catch (err) {
-    console.error('❌ Error fetching claimed blocks for driver:', err);
-    res.status(500).json({ success: false, message: 'Internal server error' });
-  }
-};
-
 // Update expired blocks function
 exports.updateExpiredBlocks = async (req, res) => {
   try {
