@@ -187,6 +187,8 @@ exports.claimBlock = async (req, res) => {
   }
 };
 
+                                                            
+
 exports.unclaimBlock = async (req, res) => {
   const { block_id, driver_id, override_penalty } = req.body;
 
@@ -266,6 +268,7 @@ exports.unclaimBlock = async (req, res) => {
 
     // Warning for late unclaims (within 60 minutes)
     if (diffMinutes <= 60 && !override_penalty) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ 
         success: false,
         warning: true, 
@@ -275,6 +278,36 @@ exports.unclaimBlock = async (req, res) => {
           penaltyApplied: true
         }
       });
+    }
+
+    // Apply penalty for late unclaims FIRST (within 60 minutes)
+    let penaltyApplied = false;
+    if (diffMinutes <= 60) {
+      try {
+        // Fixed INSERT query without description field
+        await client.query(`
+          INSERT INTO pizza_points
+            (driver_id, event_type, points, event_time, block_id, claim_id)
+          VALUES
+            ($1, $2, $3, NOW(), $4, $5)
+        `, [
+          driver_id, 
+          'Forfeit within 60', 
+          -20, 
+          block_id, 
+          claimId
+        ]);
+        penaltyApplied = true;
+        console.log(`Applied -20 point penalty to driver ${driver_id} for late unclaim of block ${block_id}`);
+      } catch (penaltyError) {
+        console.error('Error applying penalty points:', penaltyError);
+        // Rollback and fail the entire operation if penalty can't be applied
+        await client.query('ROLLBACK');
+        return res.status(500).json({ 
+          success: false,
+          error: 'Failed to apply penalty points. Unclaim cancelled.' 
+        });
+      }
     }
 
     // Delete the claim
@@ -287,40 +320,36 @@ exports.unclaimBlock = async (req, res) => {
       throw new Error('Failed to delete claim - it may have been already removed');
     }
 
+    console.log(`Deleted ${deleteResult.rowCount} claim(s) for block ${block_id}, driver ${driver_id}`);
+
     // Update the block status back to available
-    await client.query(
+    const updateResult = await client.query(
       'UPDATE blocks SET status = $1 WHERE block_id = $2', 
       ['available', block_id]
     );
 
-    // Apply penalty for late unclaims (within 60 minutes)
-    let penaltyApplied = false;
-    if (diffMinutes <= 60) {
-      try {
-        await client.query(`
-          INSERT INTO pizza_points
-            (driver_id, event_type, points, event_time, block_id, claim_id, description)
-          VALUES
-            ($1, $2, $3, NOW(), $4, $5, $6)
-        `, [
-          driver_id, 
-          'Forfeit within 60', 
-          -20, 
-          block_id, 
-          claimId,
-          `Late unclaim: ${Math.round(diffMinutes)} minutes before start`
-        ]);
-        penaltyApplied = true;
-        console.log(`Applied -20 point penalty to driver ${driver_id} for late unclaim of block ${block_id}`);
-      } catch (penaltyError) {
-        console.error('Error applying penalty points:', penaltyError);
-        // Don't fail the unclaim if penalty logging fails
-      }
-    }
+    console.log(`Updated block ${block_id} status to 'available', affected rows: ${updateResult.rowCount}`);
 
+    // Verify the changes before committing
+    const verifyBlock = await client.query(
+      'SELECT status FROM blocks WHERE block_id = $1',
+      [block_id]
+    );
+    const verifyClaim = await client.query(
+      'SELECT * FROM block_claims WHERE block_id = $1 AND driver_id = $2',
+      [block_id, driver_id]
+    );
+
+    console.log('Verification before commit:', {
+      blockStatus: verifyBlock.rows[0]?.status,
+      claimExists: verifyClaim.rowCount > 0,
+      claimRows: verifyClaim.rowCount
+    });
+
+    // Commit the transaction
     await client.query('COMMIT');
     
-    console.log(`Block ${block_id} successfully unclaimed by driver ${driver_id}`, {
+    console.log(`✅ Block ${block_id} successfully unclaimed by driver ${driver_id}`, {
       penaltyApplied,
       minutesBeforeStart: Math.round(diffMinutes)
     });
@@ -338,6 +367,7 @@ exports.unclaimBlock = async (req, res) => {
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('❌ Unclaim error:', err.message);
+    console.error('Full error:', err);
     res.status(500).json({ 
       success: false,
       error: err.message 
@@ -563,6 +593,7 @@ exports.getAvailableBlocks = async (req, res) => {
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
+
 
 // Get claimed blocks API - with IANA timezone support
 exports.getClaimedBlocks = async (req, res) => {
