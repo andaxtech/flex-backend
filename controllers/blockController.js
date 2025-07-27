@@ -187,7 +187,7 @@ exports.claimBlock = async (req, res) => {
   }
 };
 
-                                                            
+
 
 exports.unclaimBlock = async (req, res) => {
   const { block_id, driver_id, override_penalty } = req.body;
@@ -261,21 +261,28 @@ exports.unclaimBlock = async (req, res) => {
       overridePenalty: override_penalty
     });
 
-    // Check if block has already started
-    if (diffMinutes <= 0) {
-      throw new Error('Cannot unclaim a block that has already started');
+    // Check if block has already started (with 5-minute grace period)
+    const gracePeriodMinutes = 5;
+    if (diffMinutes < -gracePeriodMinutes) {
+      throw new Error(`Cannot unclaim a block that started more than ${gracePeriodMinutes} minutes ago`);
     }
 
-    // Warning for late unclaims (within 60 minutes)
+    // Warning for late unclaims (within 60 minutes of start OR already started but within grace period)
     if (diffMinutes <= 60 && !override_penalty) {
       await client.query('ROLLBACK');
+      
+      const warningMessage = diffMinutes <= 0 
+        ? `Block started ${Math.abs(Math.round(diffMinutes))} minutes ago. Unclaiming now will impact your standing. Confirm to proceed.`
+        : `Unclaiming within ${Math.round(diffMinutes)} minutes of start will impact your standing. Confirm to proceed.`;
+      
       return res.status(400).json({ 
         success: false,
         warning: true, 
-        message: `Unclaiming within ${Math.round(diffMinutes)} minutes of start will impact your standing. Confirm to proceed.`,
+        message: warningMessage,
         details: {
           minutesUntilStart: Math.round(diffMinutes),
-          penaltyApplied: true
+          penaltyApplied: true,
+          hasStarted: diffMinutes <= 0
         }
       });
     }
@@ -351,7 +358,8 @@ exports.unclaimBlock = async (req, res) => {
     
     console.log(`✅ Block ${block_id} successfully unclaimed by driver ${driver_id}`, {
       penaltyApplied,
-      minutesBeforeStart: Math.round(diffMinutes)
+      minutesBeforeStart: Math.round(diffMinutes),
+      wasAlreadyStarted: diffMinutes <= 0
     });
     
     res.status(200).json({ 
@@ -376,7 +384,6 @@ exports.unclaimBlock = async (req, res) => {
     client.release();
   }
 };
-
 // API to get available blocks - with IANA timezone support
 // API to get available blocks - with eligibility check and specific error messages
 exports.getAvailableBlocks = async (req, res) => {
