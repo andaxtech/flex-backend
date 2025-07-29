@@ -821,12 +821,6 @@ exports.updateExpiredBlocks = async (req, res) => {
 
 
 
-
-
-// Add these imports at the top of blockController.js
-const { cloudinary, upload } = require('../config/cloudinary');
-const axios = require('axios'); // for face verification API calls
-
 // Face comparison function (you'll need to implement with your chosen service)
 async function compareFaces(referencePhotoUrl, checkInPhotoUrl) {
   try {
