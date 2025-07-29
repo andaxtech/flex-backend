@@ -941,49 +941,73 @@ exports.checkInBlock = async (req, res) => {
     }
 
     // 4. Handle face photo upload and verification
-    let faceVerified = false;
-    let facePhotoUrl = null;
-    let verificationConfidence = null;
+let faceVerified = false;
+let facePhotoUrl = null;
+let verificationConfidence = null;
 
-    if (facePhotoFile) {
-      // Photo is already uploaded to Cloudinary via multer
-      facePhotoUrl = facePhotoFile.path || facePhotoFile.secure_url;
-
-      // Verify face if driver has reference photo
-      if (claim.reference_face_photo_url) {
-        try {
-          const faceComparison = await compareFaces(
-            claim.reference_face_photo_url,
-            facePhotoUrl
-          );
-          
-          faceVerified = faceComparison.isMatch;
-          verificationConfidence = faceComparison.confidence;
-
-          if (!faceVerified) {
-            // Don't block check-in, but flag for review
-            console.warn(`Face verification failed for driver ${driver_id} with confidence ${verificationConfidence}`);
-          }
-        } catch (verifyError) {
-          console.error('Face verification error:', verifyError);
-          // Don't block check-in if verification service is down
-          faceVerified = false;
+if (facePhotoFile) {
+  try {
+    // Upload to cloudinary manually from buffer
+    const uploadResult = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        { 
+          folder: 'driver-check-ins',
+          resource_type: 'image',
+          transformation: [
+            { width: 500, height: 500, crop: 'limit' }
+          ]
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
         }
-      } else {
-        // No reference photo - this could be their first check-in
-        console.log(`No reference photo for driver ${driver_id} - storing as potential reference`);
-        
-        // Update driver's reference photo if this is their first check-in
-        await client.query(
-          'UPDATE drivers SET reference_face_photo_url = $1, reference_face_uploaded_at = NOW() WHERE driver_id = $2',
-          [facePhotoUrl, driver_id]
+      );
+      uploadStream.end(facePhotoFile.buffer);
+    });
+    
+    facePhotoUrl = uploadResult.secure_url;
+    
+    // Verify face if driver has reference photo
+    if (claim.reference_face_photo_url) {
+      try {
+        const faceComparison = await compareFaces(
+          claim.reference_face_photo_url,
+          facePhotoUrl
         );
         
-        // Mark as verified since we're setting this as the reference
-        faceVerified = true;
-        verificationConfidence = 1.0;
+        faceVerified = faceComparison.isMatch;
+        verificationConfidence = faceComparison.confidence;
+
+        if (!faceVerified) {
+          // Don't block check-in, but flag for review
+          console.warn(`Face verification failed for driver ${driver_id} with confidence ${verificationConfidence}`);
+        }
+      } catch (verifyError) {
+        console.error('Face verification error:', verifyError);
+        // Don't block check-in if verification service is down
+        faceVerified = false;
       }
+    } else {
+      // No reference photo - this could be their first check-in
+      console.log(`No reference photo for driver ${driver_id} - storing as potential reference`);
+      
+      // Update driver's reference photo if this is their first check-in
+      await client.query(
+        'UPDATE drivers SET reference_face_photo_url = $1, reference_face_uploaded_at = NOW() WHERE driver_id = $2',
+        [facePhotoUrl, driver_id]
+      );
+      
+      // Mark as verified since we're setting this as the reference
+      faceVerified = true;
+      verificationConfidence = 1.0;
     }
+  } catch (uploadError) {
+    console.error('Failed to upload face photo:', uploadError);
+    throw new Error('Failed to upload face photo');
+  }
+}
+// If no photo was provided, we can't verify or set reference
+// Just continue with check-in without face verification
 
     // 5. Update block_claims with check-in info
     const updateClaimQuery = `
@@ -1065,9 +1089,13 @@ exports.checkInBlock = async (req, res) => {
     await client.query('ROLLBACK');
     
     // Clean up uploaded photo if transaction failed
-    if (facePhotoFile && facePhotoFile.public_id) {
+    if (facePhotoUrl) {
       try {
-        await cloudinary.uploader.destroy(facePhotoFile.public_id);
+        // Extract public_id from the URL
+        const urlParts = facePhotoUrl.split('/');
+        const filename = urlParts[urlParts.length - 1];
+        const publicId = `driver-check-ins/${filename.split('.')[0]}`;
+        await cloudinary.uploader.destroy(publicId);
       } catch (cleanupError) {
         console.error('Failed to cleanup uploaded photo:', cleanupError);
       }
