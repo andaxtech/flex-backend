@@ -11,6 +11,10 @@ const fixedOffsetToMinutes = (offsetStr) => {
   return sign * (hours * 60 + mins);
 };
 
+// Add these imports at the top of blockController.js
+const { cloudinary, upload } = require('../config/cloudinary');
+const axios = require('axios'); // for face verification API calls
+
 // Helper function to get store timezone day boundaries in UTC
 const getStoreDayBoundariesUTC = (utcTimestamp, storeTimezoneCode) => {
   try {
@@ -811,6 +815,405 @@ exports.updateExpiredBlocks = async (req, res) => {
       success: false,
       error: 'Failed to update expired blocks',
       details: error.message
+    });
+  }
+};
+
+
+
+
+
+// Add these imports at the top of blockController.js
+const { cloudinary, upload } = require('../config/cloudinary');
+const axios = require('axios'); // for face verification API calls
+
+// Face comparison function (you'll need to implement with your chosen service)
+async function compareFaces(referencePhotoUrl, checkInPhotoUrl) {
+  try {
+    // TODO: Implement with your face verification service
+    // Options: AWS Rekognition, Azure Face API, Face++, etc.
+    
+    // Mock implementation for now
+    console.log('Comparing faces:', { referencePhotoUrl, checkInPhotoUrl });
+    
+    // In production, replace with actual API call:
+    // const response = await axios.post('YOUR_FACE_API_ENDPOINT/compare', {
+    //   source_image: referencePhotoUrl,
+    //   target_image: checkInPhotoUrl,
+    // });
+    
+    // Mock response
+    return {
+      isMatch: true, // In production: response.data.confidence > 0.8
+      confidence: 0.95, // In production: response.data.confidence
+      details: {} // In production: response.data
+    };
+  } catch (error) {
+    console.error('Face comparison error:', error);
+    throw new Error('Face verification service unavailable');
+  }
+}
+
+// Check-in for a block with face verification
+exports.checkInBlock = async (req, res) => {
+  const { block_id } = req.params;
+  const { driver_id, check_in_time, location } = req.body;
+  const facePhotoFile = req.file; // Face photo from multer/cloudinary
+
+  // Validate required fields
+  if (!block_id || !driver_id) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Missing required fields: block_id and driver_id are required' 
+    });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // 1. Get block, claim, and driver reference photo
+    const claimQuery = `
+      SELECT 
+        bc.claim_id,
+        bc.status as claim_status,
+        bc.check_in_time as existing_check_in,
+        b.block_id,
+        b.start_time,
+        b.end_time,
+        b.location_id,
+        l.store_latitude,
+        l.store_longitude,
+        l.time_zone_code,
+        d.reference_face_photo_url,
+        d.first_name,
+        d.last_name
+      FROM block_claims bc
+      JOIN blocks b ON bc.block_id = b.block_id
+      JOIN locations l ON b.location_id = l.location_id
+      JOIN drivers d ON bc.driver_id = d.driver_id
+      WHERE bc.block_id = $1 AND bc.driver_id = $2 AND bc.status = 'accepted'
+    `;
+
+    const claimResult = await client.query(claimQuery, [block_id, driver_id]);
+
+    if (claimResult.rowCount === 0) {
+      throw new Error('No active claim found for this block and driver');
+    }
+
+    const claim = claimResult.rows[0];
+
+    // Check if already checked in
+    if (claim.existing_check_in) {
+      throw new Error('Already checked in for this block');
+    }
+
+    // 2. Validate check-in time window
+    const now = new Date();
+    const blockStart = new Date(claim.start_time);
+    const checkInWindowStart = new Date(blockStart.getTime() - 45 * 60 * 1000); // 45 minutes before
+    const checkInWindowEnd = new Date(blockStart.getTime() + 15 * 60 * 1000); // 15 minutes after
+
+    if (now < checkInWindowStart) {
+      const minutesUntilWindow = Math.round((checkInWindowStart.getTime() - now.getTime()) / 60000);
+      throw new Error(`Check-in window hasn't opened yet. Please wait ${minutesUntilWindow} more minutes.`);
+    }
+
+    if (now > checkInWindowEnd) {
+      throw new Error('Check-in window has closed. You can no longer check in for this block.');
+    }
+
+    // 3. Validate location if provided
+    let distanceFromStore = null;
+    if (location && location.latitude && location.longitude && claim.store_latitude && claim.store_longitude) {
+      // Calculate distance using Haversine formula
+      const R = 3959; // Earth's radius in miles
+      const lat1 = location.latitude * Math.PI / 180;
+      const lat2 = parseFloat(claim.store_latitude) * Math.PI / 180;
+      const deltaLat = (parseFloat(claim.store_latitude) - location.latitude) * Math.PI / 180;
+      const deltaLon = (parseFloat(claim.store_longitude) - location.longitude) * Math.PI / 180;
+
+      const a = Math.sin(deltaLat/2) * Math.sin(deltaLat/2) +
+                Math.cos(lat1) * Math.cos(lat2) *
+                Math.sin(deltaLon/2) * Math.sin(deltaLon/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      distanceFromStore = R * c;
+
+      // Check if within required distance (0.5 miles)
+      if (distanceFromStore > 0.5) {
+        throw new Error(`You are too far from the store (${distanceFromStore.toFixed(2)} miles away). You must be within 0.5 miles to check in.`);
+      }
+    }
+
+    // 4. Handle face photo upload and verification
+    let faceVerified = false;
+    let facePhotoUrl = null;
+    let verificationConfidence = null;
+
+    if (facePhotoFile) {
+      // Photo is already uploaded to Cloudinary via multer
+      facePhotoUrl = facePhotoFile.path || facePhotoFile.secure_url;
+
+      // Verify face if driver has reference photo
+      if (claim.reference_face_photo_url) {
+        try {
+          const faceComparison = await compareFaces(
+            claim.reference_face_photo_url,
+            facePhotoUrl
+          );
+          
+          faceVerified = faceComparison.isMatch;
+          verificationConfidence = faceComparison.confidence;
+
+          if (!faceVerified) {
+            // Don't block check-in, but flag for review
+            console.warn(`Face verification failed for driver ${driver_id} with confidence ${verificationConfidence}`);
+          }
+        } catch (verifyError) {
+          console.error('Face verification error:', verifyError);
+          // Don't block check-in if verification service is down
+          faceVerified = false;
+        }
+      } else {
+        // No reference photo - this could be their first check-in
+        console.log(`No reference photo for driver ${driver_id} - storing as potential reference`);
+        
+        // Update driver's reference photo if this is their first check-in
+        await client.query(
+          'UPDATE drivers SET reference_face_photo_url = $1, reference_face_uploaded_at = NOW() WHERE driver_id = $2',
+          [facePhotoUrl, driver_id]
+        );
+        
+        // Mark as verified since we're setting this as the reference
+        faceVerified = true;
+        verificationConfidence = 1.0;
+      }
+    }
+
+    // 5. Update block_claims with check-in info
+    const updateClaimQuery = `
+      UPDATE block_claims 
+      SET 
+        check_in_time = COALESCE($1, NOW()),
+        service_status = 'in_progress',
+        check_in_location_lat = $2,
+        check_in_location_lng = $3,
+        check_in_face_verified = $4
+      WHERE claim_id = $5
+      RETURNING *
+    `;
+
+    const checkInTime = check_in_time ? new Date(check_in_time) : new Date();
+    const updateResult = await client.query(updateClaimQuery, [
+      checkInTime,
+      location?.latitude || null,
+      location?.longitude || null,
+      faceVerified,
+      claim.claim_id
+    ]);
+
+    // 6. Store verification details if face photo was provided
+    if (facePhotoUrl) {
+      const insertVerificationQuery = `
+        INSERT INTO check_in_verifications 
+          (claim_id, face_photo_url, verification_status, confidence_score, verification_method, verified_at)
+        VALUES 
+          ($1, $2, $3, $4, $5, NOW())
+        ON CONFLICT (claim_id) DO UPDATE
+        SET 
+          face_photo_url = EXCLUDED.face_photo_url,
+          verification_status = EXCLUDED.verification_status,
+          confidence_score = EXCLUDED.confidence_score,
+          verified_at = NOW()
+      `;
+
+      await client.query(insertVerificationQuery, [
+        claim.claim_id,
+        facePhotoUrl,
+        faceVerified,
+        verificationConfidence,
+        claim.reference_face_photo_url ? 'ai' : 'first_checkin'
+      ]);
+    }
+
+    await client.query('COMMIT');
+
+    console.log(`✅ Driver ${driver_id} checked in for block ${block_id}`, {
+      faceVerified,
+      confidence: verificationConfidence
+    });
+
+    res.json({
+      success: true,
+      check_in_time: checkInTime.toISOString(),
+      service_status: 'in_progress',
+      message: 'Check-in successful',
+      details: {
+        block_id: parseInt(block_id),
+        driver_id: parseInt(driver_id),
+        claim_id: claim.claim_id,
+        check_in_location: location ? {
+          latitude: location.latitude,
+          longitude: location.longitude,
+          distance_from_store: distanceFromStore ? parseFloat(distanceFromStore.toFixed(2)) : null
+        } : null,
+        face_verification: facePhotoUrl ? {
+          verified: faceVerified,
+          confidence: verificationConfidence,
+          photo_url: facePhotoUrl,
+          method: claim.reference_face_photo_url ? 'comparison' : 'first_checkin'
+        } : null
+      }
+    });
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    
+    // Clean up uploaded photo if transaction failed
+    if (facePhotoFile && facePhotoFile.public_id) {
+      try {
+        await cloudinary.uploader.destroy(facePhotoFile.public_id);
+      } catch (cleanupError) {
+        console.error('Failed to cleanup uploaded photo:', cleanupError);
+      }
+    }
+    
+    console.error('❌ Check-in error:', err.message);
+    res.status(400).json({ 
+      success: false, 
+      message: err.message 
+    });
+  } finally {
+    client.release();
+  }
+};
+
+// Get check-in status for a block
+exports.getCheckInStatus = async (req, res) => {
+  const { block_id } = req.params;
+  const { driver_id } = req.query;
+
+  if (!block_id || !driver_id) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Missing required parameters: block_id and driver_id' 
+    });
+  }
+
+  try {
+    const query = `
+      SELECT 
+        bc.claim_id,
+        bc.check_in_time,
+        bc.service_status,
+        bc.check_in_location_lat,
+        bc.check_in_location_lng,
+        bc.check_in_face_verified,
+        cv.face_photo_url,
+        cv.verification_status,
+        cv.confidence_score,
+        cv.verification_method,
+        cv.verified_at
+      FROM block_claims bc
+      LEFT JOIN check_in_verifications cv ON bc.claim_id = cv.claim_id
+      WHERE bc.block_id = $1 AND bc.driver_id = $2 AND bc.status = 'accepted'
+    `;
+
+    const result = await pool.query(query, [block_id, driver_id]);
+
+    if (result.rowCount === 0) {
+      return res.json({
+        success: true,
+        checked_in: false,
+        message: 'No active claim found for this block and driver'
+      });
+    }
+
+    const claim = result.rows[0];
+    const isCheckedIn = claim.check_in_time !== null;
+
+    res.json({
+      success: true,
+      checked_in: isCheckedIn,
+      check_in_time: claim.check_in_time,
+      service_status: claim.service_status,
+      check_in_location: claim.check_in_location_lat && claim.check_in_location_lng ? {
+        latitude: parseFloat(claim.check_in_location_lat),
+        longitude: parseFloat(claim.check_in_location_lng)
+      } : null,
+      face_verification: claim.face_photo_url ? {
+        verified: claim.check_in_face_verified || claim.verification_status,
+        confidence: claim.confidence_score,
+        method: claim.verification_method,
+        verified_at: claim.verified_at,
+        photo_url: claim.face_photo_url
+      } : null
+    });
+
+  } catch (err) {
+    console.error('❌ Error getting check-in status:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Internal server error' 
+    });
+  }
+};
+
+// Upload or update driver reference photo (for onboarding or profile updates)
+exports.uploadDriverReferencePhoto = async (req, res) => {
+  const { driver_id } = req.body;
+  const photoFile = req.file;
+
+  if (!driver_id || !photoFile) {
+    return res.status(400).json({
+      success: false,
+      message: 'Missing driver_id or photo'
+    });
+  }
+
+  try {
+    const photoUrl = photoFile.path || photoFile.secure_url;
+
+    // Update driver's reference photo
+    const result = await pool.query(
+      'UPDATE drivers SET reference_face_photo_url = $1, reference_face_uploaded_at = NOW() WHERE driver_id = $2 RETURNING driver_id, first_name, last_name',
+      [photoUrl, driver_id]
+    );
+
+    if (result.rowCount === 0) {
+      throw new Error('Driver not found');
+    }
+
+    const driver = result.rows[0];
+
+    console.log(`✅ Reference photo uploaded for driver ${driver_id} (${driver.first_name} ${driver.last_name})`);
+
+    res.json({
+      success: true,
+      message: 'Reference photo uploaded successfully',
+      photo_url: photoUrl,
+      driver: {
+        driver_id: driver.driver_id,
+        name: `${driver.first_name} ${driver.last_name}`
+      }
+    });
+
+  } catch (error) {
+    console.error('Reference photo upload error:', error);
+    
+    // Clean up uploaded photo if database update failed
+    if (photoFile && photoFile.public_id) {
+      try {
+        await cloudinary.uploader.destroy(photoFile.public_id);
+      } catch (cleanupError) {
+        console.error('Failed to cleanup uploaded photo:', cleanupError);
+      }
+    }
+    
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to upload reference photo'
     });
   }
 };
