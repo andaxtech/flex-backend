@@ -835,7 +835,6 @@ async function compareFaces(referencePhotoUrl, checkInPhotoUrl, checkLiveness = 
   try {
     console.log('🔍 Starting face comparison with OpenAI Vision API...');
     
-    // Create the prompt for face comparison and liveness detection
     const messages = [
       {
         role: "system",
@@ -880,10 +879,10 @@ Return ONLY JSON in this exact format:
     ];
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4-vision-preview",
+      model: "gpt-4o-mini",  // UPDATED MODEL
       messages: messages,
       max_tokens: 300,
-      temperature: 0.1, // Low temperature for consistent results
+      temperature: 0.1,
     });
 
     const content = response.choices[0].message.content;
