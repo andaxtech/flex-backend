@@ -823,28 +823,131 @@ exports.updateExpiredBlocks = async (req, res) => {
 
 
 // Face comparison function (you'll need to implement with your chosen service)
-async function compareFaces(referencePhotoUrl, checkInPhotoUrl) {
+const OpenAI = require('openai');
+
+// Initialize OpenAI client
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+// Face comparison function using OpenAI Vision API
+async function compareFaces(referencePhotoUrl, checkInPhotoUrl, checkLiveness = true) {
   try {
-    // TODO: Implement with your face verification service
-    // Options: AWS Rekognition, Azure Face API, Face++, etc.
+    console.log('🔍 Starting face comparison with OpenAI Vision API...');
     
-    // Mock implementation for now
-    console.log('Comparing faces:', { referencePhotoUrl, checkInPhotoUrl });
+    // Create the prompt for face comparison and liveness detection
+    const messages = [
+      {
+        role: "system",
+        content: "You are a face verification system. Compare faces and detect if photos are real (not photos of photos/screens). Return JSON only."
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `Compare these two faces and determine:
+1. Are they the same person? (confidence 0-100)
+2. Is the second image a live photo (not a photo of another photo/screen)?
+3. Face quality issues (blur, angle, lighting)
+
+Return ONLY JSON in this exact format:
+{
+  "same_person": true/false,
+  "confidence": 0-100,
+  "is_live_photo": true/false,
+  "liveness_confidence": 0-100,
+  "quality_issues": [],
+  "reasoning": "brief explanation"
+}`
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: referencePhotoUrl,
+              detail: "high"
+            }
+          },
+          {
+            type: "image_url", 
+            image_url: {
+              url: checkInPhotoUrl,
+              detail: "high"
+            }
+          }
+        ]
+      }
+    ];
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4-vision-preview",
+      messages: messages,
+      max_tokens: 300,
+      temperature: 0.1, // Low temperature for consistent results
+    });
+
+    const content = response.choices[0].message.content;
+    console.log('OpenAI raw response:', content);
     
-    // In production, replace with actual API call:
-    // const response = await axios.post('YOUR_FACE_API_ENDPOINT/compare', {
-    //   source_image: referencePhotoUrl,
-    //   target_image: checkInPhotoUrl,
-    // });
-    
-    // Mock response
+    // Parse the JSON response
+    let result;
+    try {
+      // Extract JSON from the response (in case there's extra text)
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        result = JSON.parse(jsonMatch[0]);
+      } else {
+        throw new Error('No JSON found in response');
+      }
+    } catch (parseError) {
+      console.error('Failed to parse OpenAI response:', parseError);
+      throw new Error('Invalid response format from face verification');
+    }
+
+    console.log('📊 Face comparison result:', result);
+
+    // Check liveness if enabled
+    if (checkLiveness && !result.is_live_photo) {
+      console.warn('⚠️ Liveness check failed - possible photo of photo detected');
+      return {
+        isMatch: false,
+        confidence: 0,
+        details: {
+          ...result,
+          failure_reason: 'liveness_check_failed',
+          message: 'Please use a live photo, not a photo of another photo or screen'
+        }
+      };
+    }
+
+    // Apply confidence threshold (80%)
+    const CONFIDENCE_THRESHOLD = 80;
+    const isMatch = result.same_person && result.confidence >= CONFIDENCE_THRESHOLD;
+
     return {
-      isMatch: true, // In production: response.data.confidence > 0.8
-      confidence: 0.95, // In production: response.data.confidence
-      details: {} // In production: response.data
+      isMatch: isMatch,
+      confidence: result.confidence / 100, // Convert to 0-1 scale
+      details: {
+        same_person: result.same_person,
+        confidence_percentage: result.confidence,
+        is_live_photo: result.is_live_photo,
+        liveness_confidence: result.liveness_confidence,
+        quality_issues: result.quality_issues || [],
+        reasoning: result.reasoning,
+        threshold_used: CONFIDENCE_THRESHOLD
+      }
     };
+
   } catch (error) {
     console.error('Face comparison error:', error);
+    
+    // Check for specific OpenAI errors
+    if (error.code === 'insufficient_quota') {
+      throw new Error('Face verification service quota exceeded');
+    } else if (error.code === 'invalid_api_key') {
+      throw new Error('Face verification service configuration error');
+    }
+    
     throw new Error('Face verification service unavailable');
   }
 }
@@ -942,13 +1045,17 @@ exports.checkInBlock = async (req, res) => {
     }
 
     // 4. Handle face photo upload and verification
+// In the checkInBlock function, replace the face verification section with:
+
+// 4. Handle face photo upload and verification
 let faceVerified = false;
 let facePhotoUrl = null;
 let verificationConfidence = null;
+let verificationDetails = null;
 
 if (facePhotoFile) {
   try {
-    // Upload to cloudinary manually from buffer
+    // Upload to cloudinary
     const uploadResult = await new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         { 
@@ -968,47 +1075,113 @@ if (facePhotoFile) {
     
     facePhotoUrl = uploadResult.secure_url;
     
+    // Check previous attempts for this block
+    const attemptQuery = `
+      SELECT attempt_count 
+      FROM check_in_verifications 
+      WHERE claim_id = $1
+    `;
+    const attemptResult = await client.query(attemptQuery, [claim.claim_id]);
+    const previousAttempts = attemptResult.rows[0]?.attempt_count || 0;
+    
+    if (previousAttempts >= 3) {
+      throw new Error('Maximum face verification attempts (3) exceeded. Please contact support.');
+    }
+    
     // Verify face if driver has reference photo
     if (claim.reference_face_photo_url) {
       try {
         const faceComparison = await compareFaces(
           claim.reference_face_photo_url,
-          facePhotoUrl
+          facePhotoUrl,
+          true // Enable liveness detection
         );
         
         faceVerified = faceComparison.isMatch;
         verificationConfidence = faceComparison.confidence;
+        verificationDetails = faceComparison.details;
 
         if (!faceVerified) {
-          // Don't block check-in, but flag for review
-          console.warn(`Face verification failed for driver ${driver_id} with confidence ${verificationConfidence}`);
+          // Increment attempt count
+          await client.query(`
+            INSERT INTO check_in_verifications 
+              (claim_id, face_photo_url, verification_status, confidence_score, 
+               verification_method, verified_at, attempt_count, last_attempt_at)
+            VALUES 
+              ($1, $2, $3, $4, $5, NOW(), $6, NOW())
+            ON CONFLICT (claim_id) DO UPDATE
+            SET 
+              attempt_count = check_in_verifications.attempt_count + 1,
+              last_attempt_at = NOW(),
+              face_photo_url = EXCLUDED.face_photo_url,
+              verification_status = EXCLUDED.verification_status,
+              confidence_score = EXCLUDED.confidence_score
+          `, [
+            claim.claim_id,
+            facePhotoUrl,
+            false,
+            verificationConfidence,
+            'openai_vision',
+            previousAttempts + 1
+          ]);
+          
+          // Determine error message
+          let errorMessage = 'Face verification failed. ';
+          if (verificationDetails.failure_reason === 'liveness_check_failed') {
+            errorMessage += verificationDetails.message;
+          } else {
+            errorMessage += `Face did not match (${Math.round(verificationDetails.confidence_percentage)}% confidence, need 80%).`;
+          }
+          
+          errorMessage += ` You have ${3 - (previousAttempts + 1)} attempts remaining.`;
+          
+          // Clean up the uploaded photo since verification failed
+          try {
+            const urlParts = facePhotoUrl.split('/');
+            const filename = urlParts[urlParts.length - 1];
+            const publicId = `driver-check-ins/${filename.split('.')[0]}`;
+            await cloudinary.uploader.destroy(publicId);
+          } catch (cleanupError) {
+            console.error('Failed to cleanup failed verification photo:', cleanupError);
+          }
+          
+          throw new Error(errorMessage);
         }
       } catch (verifyError) {
-        console.error('Face verification error:', verifyError);
-        // Don't block check-in if verification service is down
+        // If it's our verification failure, re-throw it
+        if (verifyError.message.includes('Face verification failed') || 
+            verifyError.message.includes('Maximum face verification attempts')) {
+          throw verifyError;
+        }
+        
+        // Otherwise it's a service error - don't block check-in
+        console.error('Face verification service error:', verifyError);
         faceVerified = false;
+        verificationDetails = { error: verifyError.message };
       }
     } else {
-      // No reference photo - this could be their first check-in
-      console.log(`No reference photo for driver ${driver_id} - storing as potential reference`);
+      // No reference photo - this is their first check-in
+      console.log(`No reference photo for driver ${driver_id} - storing as reference`);
       
-      // Update driver's reference photo if this is their first check-in
       await client.query(
         'UPDATE drivers SET reference_face_photo_url = $1, reference_face_uploaded_at = NOW() WHERE driver_id = $2',
         [facePhotoUrl, driver_id]
       );
       
-      // Mark as verified since we're setting this as the reference
       faceVerified = true;
       verificationConfidence = 1.0;
     }
   } catch (uploadError) {
-    console.error('Failed to upload face photo:', uploadError);
-    throw new Error('Failed to upload face photo');
+    console.error('Failed to process face photo:', uploadError);
+    throw uploadError;
   }
+} else {
+  // No photo provided
+  throw new Error('Face photo is required for check-in');
 }
-// If no photo was provided, we can't verify or set reference
-// Just continue with check-in without face verification
+
+// Continue with the rest of the check-in process only if face is verified...
+
 
     // 5. Update block_claims with check-in info
     const updateClaimQuery = `
@@ -1244,7 +1417,7 @@ exports.uploadDriverReferencePhoto = async (req, res) => {
 
 
 
-
+//Updated uploadCheckInFace endpoint
 //a separate endpoint for face photo upload (optional but cleaner):
 exports.uploadCheckInFace = async (req, res) => {
   const { block_id } = req.params;
@@ -1257,7 +1430,55 @@ exports.uploadCheckInFace = async (req, res) => {
     });
   }
 
+  const client = await pool.connect();
+
   try {
+    await client.query('BEGIN');
+
+    // Get claim and driver info
+    const claimQuery = `
+      SELECT 
+        bc.claim_id,
+        bc.status as claim_status,
+        d.reference_face_photo_url,
+        d.first_name,
+        d.last_name
+      FROM block_claims bc
+      JOIN drivers d ON bc.driver_id = d.driver_id
+      WHERE bc.block_id = $1 AND bc.driver_id = $2 AND bc.status = 'accepted'
+    `;
+
+    const claimResult = await client.query(claimQuery, [block_id, driver_id]);
+
+    if (claimResult.rowCount === 0) {
+      throw new Error('No active claim found for this block and driver');
+    }
+
+    const claim = claimResult.rows[0];
+    const driver = {
+      first_name: claim.first_name,
+      last_name: claim.last_name,
+      reference_face_photo_url: claim.reference_face_photo_url
+    };
+
+    // Check previous attempts
+    const attemptQuery = `
+      SELECT attempt_count, last_attempt_at 
+      FROM check_in_verifications 
+      WHERE claim_id = $1
+    `;
+    const attemptResult = await client.query(attemptQuery, [claim.claim_id]);
+    const previousAttempts = attemptResult.rows[0]?.attempt_count || 0;
+    
+    if (previousAttempts >= 3) {
+      await client.query('COMMIT');
+      return res.status(400).json({
+        success: false,
+        message: 'Maximum face verification attempts (3) exceeded. Please contact support.',
+        attempts_remaining: 0
+      });
+    }
+
     // Upload base64 to cloudinary
     const uploadResult = await cloudinary.uploader.upload(
       `data:image/jpeg;base64,${face_photo_base64}`,
@@ -1273,26 +1494,30 @@ exports.uploadCheckInFace = async (req, res) => {
     const facePhotoUrl = uploadResult.secure_url;
     console.log('✅ Face photo uploaded to Cloudinary:', facePhotoUrl);
 
-    // Get driver's reference photo
-    const driverResult = await pool.query(
-      'SELECT reference_face_photo_url, first_name, last_name FROM drivers WHERE driver_id = $1',
-      [driver_id]
-    );
-
-    if (driverResult.rows.length === 0) {
-      throw new Error('Driver not found');
-    }
-
-    const driver = driverResult.rows[0];
-    const referencePhotoUrl = driver.reference_face_photo_url;
-    console.log('📸 Reference photo URL:', referencePhotoUrl);
-
     // If no reference photo, this becomes the reference
-    if (!referencePhotoUrl) {
-      await pool.query(
+    if (!driver.reference_face_photo_url) {
+      await client.query(
         'UPDATE drivers SET reference_face_photo_url = $1, reference_face_uploaded_at = NOW() WHERE driver_id = $2',
         [facePhotoUrl, driver_id]
       );
+      
+      // Record successful first check-in
+      await client.query(`
+        INSERT INTO check_in_verifications 
+          (claim_id, face_photo_url, verification_status, confidence_score, 
+           verification_method, verified_at, attempt_count)
+        VALUES 
+          ($1, $2, true, 1.0, 'first_checkin', NOW(), 1)
+        ON CONFLICT (claim_id) DO UPDATE
+        SET 
+          face_photo_url = EXCLUDED.face_photo_url,
+          verification_status = EXCLUDED.verification_status,
+          confidence_score = EXCLUDED.confidence_score,
+          verification_method = EXCLUDED.verification_method,
+          verified_at = NOW()
+      `, [claim.claim_id, facePhotoUrl]);
+      
+      await client.query('COMMIT');
       
       console.log('📸 First check-in photo saved as reference for driver:', driver_id);
       
@@ -1300,33 +1525,139 @@ exports.uploadCheckInFace = async (req, res) => {
         success: true,
         face_photo_url: facePhotoUrl,
         verified: true,
-        message: 'First check-in photo saved as reference'
+        confidence: 1.0,
+        message: 'First check-in photo saved as reference',
+        driver_name: `${driver.first_name} ${driver.last_name}`
       });
     }
 
-    // Compare with reference photo
-    console.log('🔍 Comparing faces...');
-    const comparisonResult = await compareFaces(referencePhotoUrl, facePhotoUrl);
+    // Compare with reference photo using OpenAI
+    console.log('🔍 Comparing faces with OpenAI Vision API...');
     
-    console.log('📊 Face comparison result:', {
-      isMatch: comparisonResult.isMatch,
-      confidence: comparisonResult.confidence
-    });
+    try {
+      const comparisonResult = await compareFaces(
+        driver.reference_face_photo_url, 
+        facePhotoUrl,
+        true // Enable liveness detection
+      );
+      
+      console.log('📊 Face comparison result:', {
+        isMatch: comparisonResult.isMatch,
+        confidence: comparisonResult.confidence,
+        details: comparisonResult.details
+      });
 
-    res.json({
-      success: true,
-      face_photo_url: facePhotoUrl,
-      verified: comparisonResult.isMatch,
-      confidence: comparisonResult.confidence,
-      reference_photo_url: referencePhotoUrl,
-      driver_name: `${driver.first_name} ${driver.last_name}`
-    });
+      const currentAttempt = previousAttempts + 1;
+
+      // Record the verification attempt
+      await client.query(`
+        INSERT INTO check_in_verifications 
+          (claim_id, face_photo_url, verification_status, confidence_score, 
+           verification_method, verified_at, attempt_count, last_attempt_at)
+        VALUES 
+          ($1, $2, $3, $4, $5, NOW(), $6, NOW())
+        ON CONFLICT (claim_id) DO UPDATE
+        SET 
+          attempt_count = $6,
+          last_attempt_at = NOW(),
+          face_photo_url = EXCLUDED.face_photo_url,
+          verification_status = EXCLUDED.verification_status,
+          confidence_score = EXCLUDED.confidence_score,
+          verification_method = EXCLUDED.verification_method,
+          verified_at = CASE WHEN EXCLUDED.verification_status THEN NOW() ELSE check_in_verifications.verified_at END
+      `, [
+        claim.claim_id,
+        facePhotoUrl,
+        comparisonResult.isMatch,
+        comparisonResult.confidence,
+        'openai_vision',
+        currentAttempt
+      ]);
+
+      await client.query('COMMIT');
+
+      if (!comparisonResult.isMatch) {
+        // Clean up the failed photo
+        try {
+          const publicId = uploadResult.public_id;
+          await cloudinary.uploader.destroy(publicId);
+          console.log('🗑️ Cleaned up failed verification photo');
+        } catch (cleanupError) {
+          console.error('Failed to cleanup photo:', cleanupError);
+        }
+
+        // Determine specific error message
+        let errorMessage = '';
+        const details = comparisonResult.details;
+        
+        if (details.failure_reason === 'liveness_check_failed') {
+          errorMessage = details.message || 'Please use a live photo, not a photo of another photo or screen.';
+        } else if (details.quality_issues && details.quality_issues.length > 0) {
+          errorMessage = `Photo quality issues: ${details.quality_issues.join(', ')}.`;
+        } else {
+          errorMessage = `Face did not match (${Math.round(details.confidence_percentage || 0)}% confidence, need 80%).`;
+        }
+        
+        const attemptsRemaining = 3 - currentAttempt;
+        if (attemptsRemaining > 0) {
+          errorMessage += ` You have ${attemptsRemaining} attempt${attemptsRemaining > 1 ? 's' : ''} remaining.`;
+        }
+
+        return res.status(400).json({
+          success: false,
+          message: errorMessage,
+          verified: false,
+          confidence: comparisonResult.confidence,
+          attempts_remaining: attemptsRemaining,
+          details: {
+            confidence_percentage: details.confidence_percentage,
+            threshold_required: 80,
+            quality_issues: details.quality_issues,
+            is_live_photo: details.is_live_photo
+          }
+        });
+      }
+
+      // Success!
+      res.json({
+        success: true,
+        face_photo_url: facePhotoUrl,
+        verified: true,
+        confidence: comparisonResult.confidence,
+        reference_photo_url: driver.reference_face_photo_url,
+        driver_name: `${driver.first_name} ${driver.last_name}`,
+        message: 'Face verified successfully'
+      });
+
+    } catch (verificationError) {
+      // Service error - don't count as failed attempt
+      console.error('❌ Face verification service error:', verificationError);
+      
+      // Clean up the photo
+      try {
+        await cloudinary.uploader.destroy(uploadResult.public_id);
+      } catch (cleanupError) {
+        console.error('Failed to cleanup photo:', cleanupError);
+      }
+
+      await client.query('ROLLBACK');
+      
+      return res.status(503).json({
+        success: false,
+        message: 'Face verification service temporarily unavailable. Please try again.',
+        attempts_remaining: 3 - previousAttempts
+      });
+    }
 
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('❌ Face upload error:', error);
-    res.status(500).json({
+    
+    res.status(400).json({
       success: false,
-      message: error.message
+      message: error.message || 'Failed to process face verification'
     });
+  } finally {
+    client.release();
   }
 };
