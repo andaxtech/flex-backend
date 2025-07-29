@@ -1240,3 +1240,89 @@ exports.uploadDriverReferencePhoto = async (req, res) => {
     });
   }
 };
+
+
+
+
+
+//a separate endpoint for face photo upload (optional but cleaner):
+// In blockController.js
+exports.uploadCheckInFace = async (req, res) => {
+  const { block_id } = req.params;
+  const { driver_id } = req.body;
+  const facePhotoFile = req.file;
+
+  if (!facePhotoFile || !driver_id) {
+    return res.status(400).json({
+      success: false,
+      message: 'Missing photo or driver_id'
+    });
+  }
+
+  try {
+    // Upload to cloudinary
+    const uploadResult = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        { 
+          folder: 'driver-check-ins',
+          resource_type: 'image',
+          transformation: [
+            { width: 500, height: 500, crop: 'limit' }
+          ]
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      );
+      uploadStream.end(facePhotoFile.buffer);
+    });
+    
+    const facePhotoUrl = uploadResult.secure_url;
+
+    // Get driver's reference photo
+    const driverResult = await pool.query(
+      'SELECT reference_face_photo_url FROM drivers WHERE driver_id = $1',
+      [driver_id]
+    );
+
+    if (driverResult.rows.length === 0) {
+      throw new Error('Driver not found');
+    }
+
+    const referencePhotoUrl = driverResult.rows[0].reference_face_photo_url;
+
+    // If no reference photo, this becomes the reference
+    if (!referencePhotoUrl) {
+      await pool.query(
+        'UPDATE drivers SET reference_face_photo_url = $1, reference_face_uploaded_at = NOW() WHERE driver_id = $2',
+        [facePhotoUrl, driver_id]
+      );
+      
+      return res.json({
+        success: true,
+        face_photo_url: facePhotoUrl,
+        verified: true,
+        message: 'First check-in photo saved as reference'
+      });
+    }
+
+    // Otherwise, compare with reference
+    // TODO: Implement actual face comparison here
+    const isMatch = true; // Mock for now
+
+    res.json({
+      success: true,
+      face_photo_url: facePhotoUrl,
+      verified: isMatch,
+      reference_photo_url: referencePhotoUrl
+    });
+
+  } catch (error) {
+    console.error('Face upload error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
