@@ -1246,13 +1246,11 @@ exports.uploadDriverReferencePhoto = async (req, res) => {
 
 
 //a separate endpoint for face photo upload (optional but cleaner):
-// In blockController.js
 exports.uploadCheckInFace = async (req, res) => {
   const { block_id } = req.params;
-  const { driver_id } = req.body;
-  const facePhotoFile = req.file;
+  const { driver_id, face_photo_base64 } = req.body;
 
-  if (!facePhotoFile || !driver_id) {
+  if (!face_photo_base64 || !driver_id) {
     return res.status(400).json({
       success: false,
       message: 'Missing photo or driver_id'
@@ -1260,29 +1258,24 @@ exports.uploadCheckInFace = async (req, res) => {
   }
 
   try {
-    // Upload to cloudinary
-    const uploadResult = await new Promise((resolve, reject) => {
-      const uploadStream = cloudinary.uploader.upload_stream(
-        { 
-          folder: 'driver-check-ins',
-          resource_type: 'image',
-          transformation: [
-            { width: 500, height: 500, crop: 'limit' }
-          ]
-        },
-        (error, result) => {
-          if (error) reject(error);
-          else resolve(result);
-        }
-      );
-      uploadStream.end(facePhotoFile.buffer);
-    });
+    // Upload base64 to cloudinary
+    const uploadResult = await cloudinary.uploader.upload(
+      `data:image/jpeg;base64,${face_photo_base64}`,
+      {
+        folder: 'driver-check-ins',
+        resource_type: 'image',
+        transformation: [
+          { width: 500, height: 500, crop: 'limit' }
+        ]
+      }
+    );
     
     const facePhotoUrl = uploadResult.secure_url;
+    console.log('✅ Face photo uploaded to Cloudinary:', facePhotoUrl);
 
     // Get driver's reference photo
     const driverResult = await pool.query(
-      'SELECT reference_face_photo_url FROM drivers WHERE driver_id = $1',
+      'SELECT reference_face_photo_url, first_name, last_name FROM drivers WHERE driver_id = $1',
       [driver_id]
     );
 
@@ -1290,7 +1283,9 @@ exports.uploadCheckInFace = async (req, res) => {
       throw new Error('Driver not found');
     }
 
-    const referencePhotoUrl = driverResult.rows[0].reference_face_photo_url;
+    const driver = driverResult.rows[0];
+    const referencePhotoUrl = driver.reference_face_photo_url;
+    console.log('📸 Reference photo URL:', referencePhotoUrl);
 
     // If no reference photo, this becomes the reference
     if (!referencePhotoUrl) {
@@ -1298,6 +1293,8 @@ exports.uploadCheckInFace = async (req, res) => {
         'UPDATE drivers SET reference_face_photo_url = $1, reference_face_uploaded_at = NOW() WHERE driver_id = $2',
         [facePhotoUrl, driver_id]
       );
+      
+      console.log('📸 First check-in photo saved as reference for driver:', driver_id);
       
       return res.json({
         success: true,
@@ -1307,19 +1304,26 @@ exports.uploadCheckInFace = async (req, res) => {
       });
     }
 
-    // Otherwise, compare with reference
-    // TODO: Implement actual face comparison here
-    const isMatch = true; // Mock for now
+    // Compare with reference photo
+    console.log('🔍 Comparing faces...');
+    const comparisonResult = await compareFaces(referencePhotoUrl, facePhotoUrl);
+    
+    console.log('📊 Face comparison result:', {
+      isMatch: comparisonResult.isMatch,
+      confidence: comparisonResult.confidence
+    });
 
     res.json({
       success: true,
       face_photo_url: facePhotoUrl,
-      verified: isMatch,
-      reference_photo_url: referencePhotoUrl
+      verified: comparisonResult.isMatch,
+      confidence: comparisonResult.confidence,
+      reference_photo_url: referencePhotoUrl,
+      driver_name: `${driver.first_name} ${driver.last_name}`
     });
 
   } catch (error) {
-    console.error('Face upload error:', error);
+    console.error('❌ Face upload error:', error);
     res.status(500).json({
       success: false,
       message: error.message

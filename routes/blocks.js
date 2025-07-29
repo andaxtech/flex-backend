@@ -21,4 +21,7 @@ router.get('/blocks/:block_id/check-in-status', blockController.getCheckInStatus
 // Optional: Add the reference photo upload route if you want drivers to upload reference photos
 router.post('/drivers/reference-photo', upload.single('photo'), blockController.uploadDriverReferencePhoto);
 
+// In your routes file:
+router.post('/blocks/:block_id/check-in/face', blockController.uploadCheckInFace);
+
 module.exports = router;
