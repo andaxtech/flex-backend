@@ -954,7 +954,7 @@ Return ONLY JSON in this exact format:
 // Check-in for a block with face verification
 exports.checkInBlock = async (req, res) => {
   const { block_id } = req.params;
-  const { driver_id, check_in_time, location } = req.body;
+  const { driver_id, check_in_time, location, face_photo_url } = req.body;
   const facePhotoFile = req.file; // Face photo from multer/cloudinary
 
   // Validate required fields
@@ -1043,140 +1043,43 @@ exports.checkInBlock = async (req, res) => {
       }
     }
 
-    // 4. Handle face photo upload and verification
-// In the checkInBlock function, replace the face verification section with:
 
-// 4. Handle face photo upload and verification
+
+// 4. Handle face verification
 let faceVerified = false;
-let facePhotoUrl = null;
+let facePhotoUrl = face_photo_url || null;
 let verificationConfidence = null;
 let verificationDetails = null;
 
-if (facePhotoFile) {
-  try {
-    // Upload to cloudinary
-    const uploadResult = await new Promise((resolve, reject) => {
-      const uploadStream = cloudinary.uploader.upload_stream(
-        { 
-          folder: 'driver-check-ins',
-          resource_type: 'image',
-          transformation: [
-            { width: 500, height: 500, crop: 'limit' }
-          ]
-        },
-        (error, result) => {
-          if (error) reject(error);
-          else resolve(result);
-        }
-      );
-      uploadStream.end(facePhotoFile.buffer);
-    });
+if (facePhotoUrl) {
+  // Get verification details from check_in_verifications table
+  const verificationQuery = `
+    SELECT 
+      verification_status,
+      confidence_score,
+      verification_method
+    FROM check_in_verifications
+    WHERE claim_id = $1
+    ORDER BY verified_at DESC
+    LIMIT 1
+  `;
+  
+  const verificationResult = await client.query(verificationQuery, [claim.claim_id]);
+  
+  if (verificationResult.rowCount > 0) {
+    const verification = verificationResult.rows[0];
+    faceVerified = verification.verification_status;
+    verificationConfidence = verification.confidence_score;
     
-    facePhotoUrl = uploadResult.secure_url;
-    
-    // Check previous attempts for this block
-    const attemptQuery = `
-      SELECT attempt_count 
-      FROM check_in_verifications 
-      WHERE claim_id = $1
-    `;
-    const attemptResult = await client.query(attemptQuery, [claim.claim_id]);
-    const previousAttempts = attemptResult.rows[0]?.attempt_count || 0;
-    
-    if (previousAttempts >= 3) {
-      throw new Error('Maximum face verification attempts (3) exceeded. Please contact support.');
+    if (!faceVerified) {
+      throw new Error('Face verification failed. Please try the verification process again.');
     }
-    
-    // Verify face if driver has reference photo
-    if (claim.reference_face_photo_url) {
-      try {
-        const faceComparison = await compareFaces(
-          claim.reference_face_photo_url,
-          facePhotoUrl,
-          true // Enable liveness detection
-        );
-        
-        faceVerified = faceComparison.isMatch;
-        verificationConfidence = faceComparison.confidence;
-        verificationDetails = faceComparison.details;
-
-        if (!faceVerified) {
-          // Increment attempt count
-          await client.query(`
-            INSERT INTO check_in_verifications 
-              (claim_id, face_photo_url, verification_status, confidence_score, 
-               verification_method, verified_at, attempt_count, last_attempt_at)
-            VALUES 
-              ($1, $2, $3, $4, $5, NOW(), $6, NOW())
-            ON CONFLICT (claim_id) DO UPDATE
-            SET 
-              attempt_count = check_in_verifications.attempt_count + 1,
-              last_attempt_at = NOW(),
-              face_photo_url = EXCLUDED.face_photo_url,
-              verification_status = EXCLUDED.verification_status,
-              confidence_score = EXCLUDED.confidence_score
-          `, [
-            claim.claim_id,
-            facePhotoUrl,
-            false,
-            verificationConfidence,
-            'openai_vision',
-            previousAttempts + 1
-          ]);
-          
-          // Determine error message
-          let errorMessage = 'Face verification failed. ';
-          if (verificationDetails.failure_reason === 'liveness_check_failed') {
-            errorMessage += verificationDetails.message;
-          } else {
-            errorMessage += `Face did not match (${Math.round(verificationDetails.confidence_percentage)}% confidence, need 80%).`;
-          }
-          
-          errorMessage += ` You have ${3 - (previousAttempts + 1)} attempts remaining.`;
-          
-          // Clean up the uploaded photo since verification failed
-          try {
-            const urlParts = facePhotoUrl.split('/');
-            const filename = urlParts[urlParts.length - 1];
-            const publicId = `driver-check-ins/${filename.split('.')[0]}`;
-            await cloudinary.uploader.destroy(publicId);
-          } catch (cleanupError) {
-            console.error('Failed to cleanup failed verification photo:', cleanupError);
-          }
-          
-          throw new Error(errorMessage);
-        }
-      } catch (verifyError) {
-        // If it's our verification failure, re-throw it
-        if (verifyError.message.includes('Face verification failed') || 
-            verifyError.message.includes('Maximum face verification attempts')) {
-          throw verifyError;
-        }
-        
-        // Otherwise it's a service error - don't block check-in
-        console.error('Face verification service error:', verifyError);
-        faceVerified = false;
-        verificationDetails = { error: verifyError.message };
-      }
-    } else {
-      // No reference photo - this is their first check-in
-      console.log(`No reference photo for driver ${driver_id} - storing as reference`);
-      
-      await client.query(
-        'UPDATE drivers SET reference_face_photo_url = $1, reference_face_uploaded_at = NOW() WHERE driver_id = $2',
-        [facePhotoUrl, driver_id]
-      );
-      
-      faceVerified = true;
-      verificationConfidence = 1.0;
-    }
-  } catch (uploadError) {
-    console.error('Failed to process face photo:', uploadError);
-    throw uploadError;
+  } else {
+    faceVerified = true;
+    verificationConfidence = 1.0;
   }
 } else {
-  // No photo provided
-  throw new Error('Face photo is required for check-in');
+  throw new Error('Face photo verification is required for check-in');
 }
 
 // Continue with the rest of the check-in process only if face is verified...
