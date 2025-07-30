@@ -44,6 +44,8 @@ const getStoreDayBoundariesUTC = (utcTimestamp, storeTimezoneCode) => {
   }
 };
 
+
+// API for claiming blocks
 exports.claimBlock = async (req, res) => {
   const { block_id, driver_id } = req.body;
 
@@ -56,7 +58,7 @@ exports.claimBlock = async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // Get block details with store timezone
+    // UPDATED QUERY: Include manager_id
     const blockRes = await client.query(`
       SELECT 
         b.block_id, 
@@ -64,6 +66,7 @@ exports.claimBlock = async (req, res) => {
         b.end_time, 
         b.location_id,
         b.status,
+        b.manager_id,  -- ADD: Include manager_id
         l.time_zone_code,
         l.store_id
       FROM blocks b
@@ -76,9 +79,9 @@ exports.claimBlock = async (req, res) => {
     }
 
     const block = blockRes.rows[0];
-    const { start_time, end_time, time_zone_code } = block;
+    const { start_time, end_time, time_zone_code, manager_id } = block;
 
-    // Validate block is still available
+    // Rest of the validation logic remains the same...
     if (block.status !== 'available') {
       throw new Error('This block is no longer available');
     }
@@ -86,19 +89,16 @@ exports.claimBlock = async (req, res) => {
     const newStart = new Date(start_time);
     const newEnd = new Date(end_time);
 
-    // Validate timestamps
     if (isNaN(newStart.getTime()) || isNaN(newEnd.getTime())) {
       throw new Error('Invalid block timestamps');
     }
 
-    // Check if block has already started (with grace period)
     const now = new Date();
-    const gracePeriodEnd = new Date(newStart.getTime() + 5 * 60 * 1000); // 5 minutes after start
+    const gracePeriodEnd = new Date(newStart.getTime() + 5 * 60 * 1000);
     if (now > gracePeriodEnd) {
       throw new Error('Cannot claim block that has already started');
     }
 
-    // Get store timezone day boundaries for overlap checking
     const { utcStartOfDay, utcEndOfDay } = getStoreDayBoundariesUTC(newStart, time_zone_code);
 
     console.log('Checking overlaps for driver', driver_id, 'on store day:', {
@@ -106,10 +106,11 @@ exports.claimBlock = async (req, res) => {
       utcStartOfDay: utcStartOfDay.toISOString(),
       utcEndOfDay: utcEndOfDay.toISOString(),
       newBlockStart: newStart.toISOString(),
-      newBlockEnd: newEnd.toISOString()
+      newBlockEnd: newEnd.toISOString(),
+      blockManagerId: manager_id  // ADD: Log manager_id
     });
 
-    // Check for existing claims on the same store day
+    // Check for existing claims (unchanged)
     const existingClaims = await client.query(`
       SELECT b.block_id, b.start_time, b.end_time, l.store_id
       FROM block_claims bc 
@@ -125,7 +126,6 @@ exports.claimBlock = async (req, res) => {
       const claimedStart = new Date(row.start_time);
       const claimedEnd = new Date(row.end_time);
 
-      // Check for time overlap
       const isOverlap = newStart < claimedEnd && newEnd > claimedStart;
       if (isOverlap) {
         console.log('Found overlapping block:', {
@@ -143,7 +143,6 @@ exports.claimBlock = async (req, res) => {
       throw new Error(`Cannot claim overlapping block. You already have ${overlapCount} overlapping block(s) on this day.`);
     }
 
-    // Check if someone else has already claimed this specific block
     const dupCheck = await client.query(
       'SELECT bc.claim_id, bc.driver_id FROM block_claims bc WHERE bc.block_id = $1 AND bc.status = $2', 
       [block_id, 'accepted']
@@ -160,7 +159,6 @@ exports.claimBlock = async (req, res) => {
       RETURNING *
     `, [block_id, driver_id, 'accepted']);
 
-    // Update block status
     await client.query(
       'UPDATE blocks SET status = $1 WHERE block_id = $2', 
       ['accepted', block_id]
@@ -168,7 +166,7 @@ exports.claimBlock = async (req, res) => {
 
     await client.query('COMMIT');
     
-    console.log(`Block ${block_id} successfully claimed by driver ${driver_id}`);
+    console.log(`Block ${block_id} (created by manager ${manager_id}) successfully claimed by driver ${driver_id}`);
     
     res.status(201).json({ 
       success: true, 
@@ -176,7 +174,8 @@ exports.claimBlock = async (req, res) => {
       data: {
         claim_id: claimResult.rows[0].claim_id,
         block_id: block_id,
-        claim_time: claimResult.rows[0].claim_time
+        claim_time: claimResult.rows[0].claim_time,
+        manager_id: manager_id  // ADD: Include manager_id in response
       }
     });
 
@@ -194,6 +193,8 @@ exports.claimBlock = async (req, res) => {
 
 
 
+
+//API for unclaiming a blocl
 exports.unclaimBlock = async (req, res) => {
   const { block_id, driver_id, override_penalty } = req.body;
 
@@ -389,8 +390,13 @@ exports.unclaimBlock = async (req, res) => {
     client.release();
   }
 };
+
+
+
+
 // API to get available blocks - with IANA timezone support
 // API to get available blocks - with eligibility check and specific error messages
+/ 1. UPDATE: getAvailableBlocks - Include manager info in the response
 exports.getAvailableBlocks = async (req, res) => {
   const { driver_id } = req.query;
   const driverIdInt = parseInt(driver_id);
@@ -400,7 +406,7 @@ exports.getAvailableBlocks = async (req, res) => {
   }
 
   try {
-    // First, check driver eligibility
+    // First, check driver eligibility (unchanged)
     const eligibilityQuery = `
       WITH valid_insurance AS (
         SELECT 
@@ -448,7 +454,7 @@ exports.getAvailableBlocks = async (req, res) => {
     const ineligibilityReasons = [];
     const warnings = [];
 
-    // Check for expired credentials
+    // Check for expired credentials (unchanged)
     if (driverStatus.license_status === 'expired') {
       ineligibilityReasons.push({
         type: 'license',
@@ -506,7 +512,7 @@ exports.getAvailableBlocks = async (req, res) => {
       });
     }
 
-    // If eligible, proceed with fetching blocks
+    // UPDATED QUERY: Include manager information in blocks query
     const blocksQuery = `
       WITH latest_claims AS (
         SELECT * FROM (
@@ -526,6 +532,7 @@ exports.getAvailableBlocks = async (req, res) => {
         b.location_id,
         b.device_time_zone_name,
         b.device_timezone_offset,
+        b.manager_id,  -- ADD: Include manager_id from blocks table
         lc.claim_id,
         l.store_id,
         l.street_name,
@@ -535,10 +542,14 @@ exports.getAvailableBlocks = async (req, res) => {
         l.postal_code,
         l.store_latitude,
         l.store_longitude,
-        l.time_zone_code
+        l.time_zone_code,
+        m.first_name as manager_first_name,  -- ADD: Manager details
+        m.last_name as manager_last_name,
+        m.phone_number as manager_phone
       FROM blocks AS b
       LEFT JOIN latest_claims lc ON b.block_id = lc.block_id
       INNER JOIN locations l ON b.location_id = l.location_id
+      LEFT JOIN managers m ON b.manager_id = m.manager_id  -- ADD: Join with managers table
       WHERE b.status = 'available'
         AND lc.claim_id IS NULL
         AND b.start_time > NOW()
@@ -576,6 +587,12 @@ exports.getAvailableBlocks = async (req, res) => {
           region: row.region,
           timeZoneCode: blockTimezoneOffset,
           timeZoneName: timeZoneName,
+          manager_id: row.manager_id,  // ADD: Include manager_id
+          manager: row.manager_id ? {  // ADD: Manager info object
+            id: row.manager_id,
+            name: `${row.manager_first_name || ''} ${row.manager_last_name || ''}`.trim(),
+            phone: row.manager_phone
+          } : null,
           store: {
             storeId: row.store_id,
             address: `${row.street_name}, ${row.city}, ${row.region} ${row.postal_code}`,
@@ -596,7 +613,7 @@ exports.getAvailableBlocks = async (req, res) => {
     res.json({ 
       success: true,
       eligible: true,
-      warnings, // Include any expiring soon warnings
+      warnings,
       blocksByDate: { 'all': blocksList },
       blocks: blocksList
     });
@@ -606,7 +623,11 @@ exports.getAvailableBlocks = async (req, res) => {
   }
 };
 
+
+
+
 // Get claimed blocks API - with IANA timezone support and claim_id
+/ 2. UPDATE: getClaimedBlocks - Include manager info for claimed blocks
 exports.getClaimedBlocks = async (req, res) => {
   const { driver_id } = req.query;
   const driverIdInt = parseInt(driver_id);
@@ -616,6 +637,7 @@ exports.getClaimedBlocks = async (req, res) => {
   }
 
   try {
+    // UPDATED QUERY: Include manager information
     const query = `
       WITH latest_claims AS (
         SELECT * FROM (
@@ -628,17 +650,18 @@ exports.getClaimedBlocks = async (req, res) => {
       )
       SELECT
         b.block_id,
-        lc.claim_id,              -- ADD THIS: claim_id from block_claims
+        lc.claim_id,
         b.date,
         b.start_time,
         b.end_time,
         b.amount,
         b.status,
         b.location_id,
-        b.device_time_zone_name,  -- IANA timezone from blocks table
-        b.device_timezone_offset, -- Device offset from blocks table
+        b.device_time_zone_name,
+        b.device_timezone_offset,
+        b.manager_id,  -- ADD: Include manager_id
         lc.claim_time,
-        lc.service_status,        -- ADD THIS: service_status from claims
+        lc.service_status,
         l.store_id,
         l.street_name,
         l.city,
@@ -647,27 +670,35 @@ exports.getClaimedBlocks = async (req, res) => {
         l.postal_code,
         l.store_latitude,
         l.store_longitude,
-        l.time_zone_code,         -- Store's fixed offset
+        l.time_zone_code,
+        m.first_name as block_manager_first_name,  -- ADD: Manager who created the block
+        m.last_name as block_manager_last_name,
+        m.phone_number as block_manager_phone,
         COALESCE(
           json_agg(
             DISTINCT jsonb_build_object(
-              'managerId', m.manager_id,
-              'firstName', m.first_name
+              'managerId', sm.manager_id,
+              'firstName', sm.first_name,
+              'lastName', sm.last_name,  -- ADD: Include last name
+              'phone', sm.phone_number   -- ADD: Include phone
             )
-          ) FILTER (WHERE m.manager_id IS NOT NULL),
+          ) FILTER (WHERE sm.manager_id IS NOT NULL),
           '[]'
-        ) AS managers
+        ) AS store_managers  -- Changed from 'managers' to 'store_managers' for clarity
       FROM latest_claims lc
       INNER JOIN blocks b ON lc.block_id = b.block_id
       INNER JOIN locations l ON b.location_id = l.location_id
+      LEFT JOIN managers m ON b.manager_id = m.manager_id  -- ADD: Join for block creator
       LEFT JOIN manager_store_links msl ON l.store_id = msl.store_id
-      LEFT JOIN managers m ON msl.manager_id = m.manager_id
+      LEFT JOIN managers sm ON msl.manager_id = sm.manager_id  -- Store managers
       GROUP BY
        b.block_id, b.date, b.start_time, b.end_time, b.amount, b.status,
        b.location_id, b.device_time_zone_name, b.device_timezone_offset,
-       lc.claim_id, lc.claim_time, lc.service_status,  -- ADD THESE to GROUP BY
+       b.manager_id,  -- ADD: Include in GROUP BY
+       lc.claim_id, lc.claim_time, lc.service_status,
        l.store_id, l.street_name, l.city, l.region, l.phone, l.postal_code,
-       l.store_latitude, l.store_longitude, l.time_zone_code
+       l.store_latitude, l.store_longitude, l.time_zone_code,
+       m.first_name, m.last_name, m.phone_number  -- ADD: Manager fields to GROUP BY
       ORDER BY b.start_time
     `;
 
@@ -676,7 +707,6 @@ exports.getClaimedBlocks = async (req, res) => {
     
     result.rows.forEach((row) => {
       try {
-        // Validate timestamps
         const startTimeISO = row.start_time?.toISOString() || null;
         const endTimeISO = row.end_time?.toISOString() || null;
         const claimTimeISO = row.claim_time?.toISOString() || null;
@@ -686,35 +716,40 @@ exports.getClaimedBlocks = async (req, res) => {
           return;
         }
         
-        // Use IANA timezone if available
         const timeZoneName = row.device_time_zone_name || null;
         const timeZoneOffset = row.device_timezone_offset || row.time_zone_code;
         
         blocksList.push({
           block_id: row.block_id,
-          claim_id: row.claim_id,           // ADD THIS: Include claim_id
-          claimId: row.claim_id,            // ADD THIS: Alternative naming for compatibility
+          claim_id: row.claim_id,
+          claimId: row.claim_id,
           startTime: startTimeISO,
           endTime: endTimeISO,
           amount: row.amount,
           status: row.status,
-          service_status: row.service_status || 'accepted',  // ADD THIS: service status
+          service_status: row.service_status || 'accepted',
           claimTime: claimTimeISO,
           locationId: row.location_id,
           city: row.city,
           region: row.region,
-          timeZoneCode: timeZoneOffset,     // For backward compatibility
-          timeZoneName: timeZoneName,       // IANA timezone
+          timeZoneCode: timeZoneOffset,
+          timeZoneName: timeZoneName,
+          manager_id: row.manager_id,  // ADD: Block creator's manager_id
+          blockCreator: row.manager_id ? {  // ADD: Info about who created the block
+            id: row.manager_id,
+            name: `${row.block_manager_first_name || ''} ${row.block_manager_last_name || ''}`.trim(),
+            phone: row.block_manager_phone
+          } : null,
           store: {
             storeId: row.store_id,
             address: `${row.street_name}, ${row.city}, ${row.region} ${row.postal_code}`,
             phone: row.phone,
             latitude: row.store_latitude,
             longitude: row.store_longitude,
-            timeZoneCode: row.time_zone_code,    // Store's fixed offset
-            timeZoneName: timeZoneName            // IANA timezone from block creation
+            timeZoneCode: row.time_zone_code,
+            timeZoneName: timeZoneName
           },
-          managers: row.managers
+          storeManagers: row.store_managers  // Renamed for clarity
         });
       } catch (error) {
         console.error('Error processing claimed block row:', error, row);
@@ -728,10 +763,8 @@ exports.getClaimedBlocks = async (req, res) => {
       try {
         let dateKey;
         
-        // Use IANA timezone for accurate date grouping if available
         if (block.timeZoneName) {
           const startDate = new Date(block.startTime);
-          // This formats the date in the block's timezone
           dateKey = startDate.toLocaleDateString('en-CA', { 
             timeZone: block.timeZoneName,
             year: 'numeric',
@@ -739,7 +772,6 @@ exports.getClaimedBlocks = async (req, res) => {
             day: '2-digit'
           });
         } else {
-          // Fallback to UTC date if no timezone info
           dateKey = block.startTime.split('T')[0];
         }
         
@@ -750,7 +782,6 @@ exports.getClaimedBlocks = async (req, res) => {
       }
     });
 
-    // Sort dates
     const sortedGrouped = {};
     Object.keys(grouped).sort().forEach(date => {
       sortedGrouped[date] = grouped[date];
@@ -760,19 +791,24 @@ exports.getClaimedBlocks = async (req, res) => {
     console.log(`Total blocks: ${blocksList.length}, Sample block:`, blocksList[0] ? {
       block_id: blocksList[0].block_id,
       claim_id: blocksList[0].claim_id,
-      service_status: blocksList[0].service_status
+      service_status: blocksList[0].service_status,
+      manager_id: blocksList[0].manager_id
     } : 'No blocks');
     
     res.json({ 
       success: true, 
       blocksByDate: sortedGrouped,
-      claimedBlocks: blocksList  // Also send flat array
+      claimedBlocks: blocksList
     });
   } catch (err) {
     console.error('❌ Error fetching claimed blocks for driver:', err);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
+
+
+
+
 
 // Update expired blocks function
 exports.updateExpiredBlocks = async (req, res) => {
@@ -828,6 +864,7 @@ exports.updateExpiredBlocks = async (req, res) => {
     });
   }
 };
+
 
 
 
@@ -1576,6 +1613,14 @@ exports.uploadCheckInFace = async (req, res) => {
     client.release();
   }
 };
+
+
+
+
+
+
+
+// 3. UPDATE: getBlockDetails - Include manager info
 exports.getBlockDetails = async (req, res) => {
   try {
     const blockId = parseInt(req.params.id);
@@ -1583,7 +1628,7 @@ exports.getBlockDetails = async (req, res) => {
     
     console.log(`➡️ GET /api/blocks/${blockId}/details?claim_id=${claimId}`);
     
-    // Get block details with store info
+    // UPDATED QUERY: Include manager information
     const blockQuery = `
       SELECT 
         b.block_id,
@@ -1592,14 +1637,19 @@ exports.getBlockDetails = async (req, res) => {
         b.amount,
         b.status,
         b.location_id,
+        b.manager_id,  -- ADD: Include manager_id
         l.city,
         l.region,
         l.time_zone_code,
         l.store_id,
         l.street_name,
-        l.phone
+        l.phone,
+        m.first_name as manager_first_name,  -- ADD: Manager details
+        m.last_name as manager_last_name,
+        m.phone_number as manager_phone
       FROM blocks b
       LEFT JOIN locations l ON b.location_id = l.location_id
+      LEFT JOIN managers m ON b.manager_id = m.manager_id  -- ADD: Join with managers
       WHERE b.block_id = $1
     `;
     
@@ -1635,6 +1685,7 @@ exports.getBlockDetails = async (req, res) => {
         city: block.city,
         region: block.region,
         timeZoneCode: block.time_zone_code,
+        manager_id: block.manager_id,  // ADD: Include manager_id
         store: {
           storeId: block.store_id,
           address: block.street_name,
@@ -1644,9 +1695,10 @@ exports.getBlockDetails = async (req, res) => {
       },
       checkInTime: checkInTime,
       claimId: claimId,
-      manager: {
-        name: 'Store Manager',
-        phone: '555-0123',
+      manager: {  // UPDATED: Use actual manager data
+        id: block.manager_id,
+        name: block.manager_id ? `${block.manager_first_name || ''} ${block.manager_last_name || ''}`.trim() : 'Store Manager',
+        phone: block.manager_phone || block.phone || '555-0123',
         profileImage: ''
       }
     };
