@@ -24,7 +24,7 @@ exports.getDriverById = async (req, res) => {
         last_name,
         phone_number,
         email,
-        profile_image,
+        reference_face_photo_url,
         status
       FROM drivers 
       WHERE driver_id = $1
@@ -44,8 +44,8 @@ exports.getDriverById = async (req, res) => {
       last_name: driver.last_name,
       phone: driver.phone_number,
       email: driver.email,
-      profile_image: driver.profile_image || '',
-      profileImage: driver.profile_image || '', // For compatibility with frontend
+      profile_image: driver.reference_face_photo_url || '',
+      profileImage: driver.reference_face_photo_url || '', // For compatibility with frontend
       status: driver.status
     });
   } catch (error) {
