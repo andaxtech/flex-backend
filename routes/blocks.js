@@ -24,4 +24,6 @@ router.post('/drivers/reference-photo', upload.single('photo'), blockController.
 // In your routes file:
 router.post('/blocks/:block_id/check-in/face', blockController.uploadCheckInFace);
 
+router.get('/blocks/:id/details', blockController.getBlockDetails);
+
 module.exports = router;

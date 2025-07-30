@@ -1576,3 +1576,90 @@ exports.uploadCheckInFace = async (req, res) => {
     client.release();
   }
 };
+exports.getBlockDetails = async (req, res) => {
+  try {
+    const blockId = parseInt(req.params.id);
+    const claimId = parseInt(req.query.claim_id) || 0;
+    
+    console.log(`➡️ GET /api/blocks/${blockId}/details?claim_id=${claimId}`);
+    
+    // Get block details with store info - FIXED QUERY
+    const blockQuery = `
+      SELECT 
+        b.block_id,
+        b.start_time,
+        b.end_time,
+        b.amount,
+        b.status,
+        b.location_id,
+        b.city,
+        b.region,
+        b.device_timezone_offset as time_zone_code,
+        l.store_id,
+        l.street_name,
+        l.city as store_city,
+        l.region as store_region,
+        l.postal_code,
+        l.phone,
+        l.time_zone_code as store_timezone
+      FROM blocks b
+      LEFT JOIN locations l ON b.location_id = l.location_id
+      WHERE b.block_id = $1
+    `;
+    
+    const blockResult = await pool.query(blockQuery, [blockId]);
+    
+    if (blockResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Block not found' });
+    }
+    
+    const block = blockResult.rows[0];
+    
+    // Get check-in time if available - FIXED TABLE NAME
+    const checkInQuery = `
+      SELECT bc.check_in_time 
+      FROM block_claims bc
+      WHERE bc.block_id = $1 AND bc.driver_id = (
+        SELECT driver_id FROM block_claims WHERE block_id = $1 LIMIT 1
+      )
+      ORDER BY bc.check_in_time DESC 
+      LIMIT 1
+    `;
+    
+    const checkInResult = await pool.query(checkInQuery, [blockId]);
+    const checkInTime = checkInResult.rows.length > 0 ? checkInResult.rows[0].check_in_time : null;
+    
+    // Format the response
+    const response = {
+      block: {
+        block_id: block.block_id,
+        startTime: block.start_time,
+        endTime: block.end_time,
+        amount: block.amount,
+        status: block.status,
+        locationId: block.location_id,
+        city: block.city,
+        region: block.region,
+        timeZoneCode: block.time_zone_code || block.store_timezone,
+        store: {
+          storeId: block.store_id,
+          address: `${block.street_name}, ${block.store_city}, ${block.store_region} ${block.postal_code}`,
+          phone: block.phone || '555-0123',
+          timeZoneCode: block.store_timezone
+        }
+      },
+      checkInTime: checkInTime,
+      claimId: claimId,
+      manager: {
+        name: 'Store Manager',
+        phone: '555-0123',
+        profileImage: ''
+      }
+    };
+    
+    res.json(response);
+  } catch (error) {
+    console.error('Error fetching block details:', error);
+    res.status(500).json({ error: 'Failed to fetch block details' });
+  }
+};

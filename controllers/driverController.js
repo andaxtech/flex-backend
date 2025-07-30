@@ -105,3 +105,64 @@ exports.signupDriver = async (req, res) => {
     client.release();
   }
 };
+exports.getNextBlock = async (req, res) => {
+  try {
+    const driverId = parseInt(req.params.id);
+    const storeId = parseInt(req.query.store_id);
+    
+    console.log(`Looking for next block for driver ${driverId} at store ${storeId}`);
+    
+    // Get the next claimed block for this driver at the same store - FIXED TABLE NAMES
+    const query = `
+      SELECT 
+        b.block_id,
+        b.start_time,
+        b.end_time,
+        b.amount,
+        b.city,
+        b.region,
+        b.device_timezone_offset as time_zone_code,
+        l.store_id,
+        l.street_name,
+        l.city as store_city,
+        l.region as store_region,
+        l.postal_code,
+        l.phone,
+        l.time_zone_code as store_timezone
+      FROM blocks b
+      INNER JOIN block_claims bc ON b.block_id = bc.block_id
+      LEFT JOIN locations l ON b.location_id = l.location_id
+      WHERE bc.driver_id = $1 
+        AND l.store_id = $2
+        AND b.start_time > NOW()
+        AND bc.status = 'accepted'
+      ORDER BY b.start_time ASC
+      LIMIT 1
+    `;
+    
+    const result = await pool.query(query, [driverId, storeId]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'No next block found' });
+    }
+    
+    const block = result.rows[0];
+    res.json({
+      block_id: block.block_id,
+      startTime: block.start_time,
+      endTime: block.end_time,
+      amount: block.amount,
+      city: block.city,
+      region: block.region,
+      store: {
+        storeId: block.store_id,
+        address: `${block.street_name}, ${block.store_city}, ${block.store_region} ${block.postal_code}`,
+        phone: block.phone || '555-0123',
+        timeZoneCode: block.store_timezone || block.time_zone_code
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching next block:', error);
+    res.status(500).json({ error: 'Failed to fetch next block' });
+  }
+};
