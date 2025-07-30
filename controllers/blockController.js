@@ -1592,16 +1592,13 @@ exports.getBlockDetails = async (req, res) => {
         b.amount,
         b.status,
         b.location_id,
-        b.city,
-        b.region,
-        b.device_timezone_offset as time_zone_code,
+        l.city,
+        l.region,
+        l.time_zone_code,
         l.store_id,
         l.street_name,
-        l.city as store_city,
-        l.region as store_region,
         l.postal_code,
         l.phone,
-        l.time_zone_code as store_timezone
       FROM blocks b
       LEFT JOIN locations l ON b.location_id = l.location_id
       WHERE b.block_id = $1
