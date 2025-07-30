@@ -952,6 +952,8 @@ Return ONLY JSON in this exact format:
 }
 
 // Check-in for a block with face verification
+// Replace the ENTIRE checkInBlock function with this fixed version:
+
 exports.checkInBlock = async (req, res) => {
   const { block_id } = req.params;
   const { driver_id, check_in_time, location, face_photo_url } = req.body;
@@ -966,6 +968,9 @@ exports.checkInBlock = async (req, res) => {
   }
 
   const client = await pool.connect();
+  
+  // Declare facePhotoUrl at the function scope so it's available in error handlers
+  let facePhotoUrl = face_photo_url || null;
 
   try {
     await client.query('BEGIN');
@@ -1043,56 +1048,46 @@ exports.checkInBlock = async (req, res) => {
       }
     }
 
+    // 4. Handle face verification
+    let faceVerified = false;
+    let verificationConfidence = null;
+    let verificationDetails = null;
 
-
-// In your checkInBlock function, replace the face verification section (starting around line 1065) with this:
-
-// 4. Handle face verification
-let faceVerified = false;
-let facePhotoUrl = face_photo_url || null; // This line was missing the 'let' declaration
-let verificationConfidence = null;
-let verificationDetails = null;
-
-if (facePhotoUrl) {
-  // Get verification details from check_in_verifications table
-  const verificationQuery = `
-    SELECT 
-      verification_status,
-      confidence_score,
-      verification_method,
-      face_photo_url
-    FROM check_in_verifications
-    WHERE claim_id = $1
-    ORDER BY verified_at DESC
-    LIMIT 1
-  `;
-  
-  const verificationResult = await client.query(verificationQuery, [claim.claim_id]);
-  
-  if (verificationResult.rowCount > 0) {
-    const verification = verificationResult.rows[0];
-    faceVerified = verification.verification_status;
-    verificationConfidence = verification.confidence_score;
-    // Update facePhotoUrl from the verification record if not provided
-    if (!facePhotoUrl && verification.face_photo_url) {
-      facePhotoUrl = verification.face_photo_url;
+    if (facePhotoUrl) {
+      // Get verification details from check_in_verifications table
+      const verificationQuery = `
+        SELECT 
+          verification_status,
+          confidence_score,
+          verification_method,
+          face_photo_url
+        FROM check_in_verifications
+        WHERE claim_id = $1
+        ORDER BY verified_at DESC
+        LIMIT 1
+      `;
+      
+      const verificationResult = await client.query(verificationQuery, [claim.claim_id]);
+      
+      if (verificationResult.rowCount > 0) {
+        const verification = verificationResult.rows[0];
+        faceVerified = verification.verification_status;
+        verificationConfidence = verification.confidence_score;
+        // Update facePhotoUrl from the verification record if not provided
+        if (!facePhotoUrl && verification.face_photo_url) {
+          facePhotoUrl = verification.face_photo_url;
+        }
+        
+        if (!faceVerified) {
+          throw new Error('Face verification failed. Please try the verification process again.');
+        }
+      } else {
+        faceVerified = true;
+        verificationConfidence = 1.0;
+      }
+    } else {
+      throw new Error('Face photo verification is required for check-in');
     }
-    
-    if (!faceVerified) {
-      throw new Error('Face verification failed. Please try the verification process again.');
-    }
-  } else {
-    // If no verification record but face_photo_url was provided, assume it's verified
-    // This handles the case where verification was done separately
-    faceVerified = true;
-    verificationConfidence = 1.0;
-  }
-} else {
-  throw new Error('Face photo verification is required for check-in');
-}
-
-// Continue with the rest of the check-in process only if face is verified...
-
 
     // 5. Update block_claims with check-in info
     const updateClaimQuery = `
