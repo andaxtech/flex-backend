@@ -396,7 +396,7 @@ exports.unclaimBlock = async (req, res) => {
 
 // API to get available blocks - with IANA timezone support
 // API to get available blocks - with eligibility check and specific error messages
-/ 1. UPDATE: getAvailableBlocks - Include manager info in the response
+// 1. UPDATE: getAvailableBlocks - Include manager info in the response
 exports.getAvailableBlocks = async (req, res) => {
   const { driver_id } = req.query;
   const driverIdInt = parseInt(driver_id);
@@ -627,7 +627,7 @@ exports.getAvailableBlocks = async (req, res) => {
 
 
 // Get claimed blocks API - with IANA timezone support and claim_id
-/ 2. UPDATE: getClaimedBlocks - Include manager info for claimed blocks
+// 2. UPDATE: getClaimedBlocks - Include manager info for claimed blocks
 exports.getClaimedBlocks = async (req, res) => {
   const { driver_id } = req.query;
   const driverIdInt = parseInt(driver_id);
