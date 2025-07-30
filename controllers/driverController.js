@@ -112,23 +112,19 @@ exports.getNextBlock = async (req, res) => {
     
     console.log(`Looking for next block for driver ${driverId} at store ${storeId}`);
     
-    // Get the next claimed block for this driver at the same store - FIXED TABLE NAMES
+    // Get the next claimed block for this driver at the same store
     const query = `
       SELECT 
         b.block_id,
         b.start_time,
         b.end_time,
         b.amount,
-        b.city,
-        b.region,
-        b.device_timezone_offset as time_zone_code,
+        l.city,
+        l.region,
+        l.time_zone_code,
         l.store_id,
         l.street_name,
-        l.city as store_city,
-        l.region as store_region,
-        l.postal_code,
-        l.phone,
-        l.time_zone_code as store_timezone
+        l.phone
       FROM blocks b
       INNER JOIN block_claims bc ON b.block_id = bc.block_id
       LEFT JOIN locations l ON b.location_id = l.location_id
@@ -156,9 +152,9 @@ exports.getNextBlock = async (req, res) => {
       region: block.region,
       store: {
         storeId: block.store_id,
-        address: `${block.street_name}, ${block.store_city}, ${block.store_region} ${block.postal_code}`,
+        address: block.street_name,
         phone: block.phone || '555-0123',
-        timeZoneCode: block.store_timezone || block.time_zone_code
+        timeZoneCode: block.time_zone_code
       }
     });
   } catch (error) {
