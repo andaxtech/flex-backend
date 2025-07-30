@@ -12,6 +12,48 @@ exports.getDrivers = async (req, res) => {
   }
 };
 
+exports.getDriverById = async (req, res) => {
+  try {
+    const driverId = parseInt(req.params.id);
+    
+    const query = `
+      SELECT 
+        driver_id,
+        CONCAT(first_name, ' ', last_name) as name,
+        first_name,
+        last_name,
+        phone_number,
+        email,
+        profile_image,
+        status
+      FROM drivers 
+      WHERE driver_id = $1
+    `;
+    
+    const result = await pool.query(query, [driverId]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Driver not found' });
+    }
+    
+    const driver = result.rows[0];
+    res.json({
+      driver_id: driver.driver_id,
+      name: driver.name,
+      first_name: driver.first_name,
+      last_name: driver.last_name,
+      phone: driver.phone_number,
+      email: driver.email,
+      profile_image: driver.profile_image || '',
+      profileImage: driver.profile_image || '', // For compatibility with frontend
+      status: driver.status
+    });
+  } catch (error) {
+    console.error('Error fetching driver:', error);
+    res.status(500).json({ error: 'Failed to fetch driver' });
+  }
+};
+
 exports.signupDriver = async (req, res) => {
   const client = await pool.connect();
   try {
