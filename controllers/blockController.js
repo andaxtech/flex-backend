@@ -606,8 +606,7 @@ exports.getAvailableBlocks = async (req, res) => {
   }
 };
 
-
-// Get claimed blocks API - with IANA timezone support
+// Get claimed blocks API - with IANA timezone support and claim_id
 exports.getClaimedBlocks = async (req, res) => {
   const { driver_id } = req.query;
   const driverIdInt = parseInt(driver_id);
@@ -620,7 +619,7 @@ exports.getClaimedBlocks = async (req, res) => {
     const query = `
       WITH latest_claims AS (
         SELECT * FROM (
-          SELECT claim_id, block_id, driver_id, claim_time,
+          SELECT claim_id, block_id, driver_id, claim_time, service_status,
                  ROW_NUMBER() OVER (PARTITION BY block_id ORDER BY claim_time DESC) AS rn
           FROM block_claims
           WHERE driver_id = $1
@@ -629,6 +628,7 @@ exports.getClaimedBlocks = async (req, res) => {
       )
       SELECT
         b.block_id,
+        lc.claim_id,              -- ADD THIS: claim_id from block_claims
         b.date,
         b.start_time,
         b.end_time,
@@ -638,6 +638,7 @@ exports.getClaimedBlocks = async (req, res) => {
         b.device_time_zone_name,  -- IANA timezone from blocks table
         b.device_timezone_offset, -- Device offset from blocks table
         lc.claim_time,
+        lc.service_status,        -- ADD THIS: service_status from claims
         l.store_id,
         l.street_name,
         l.city,
@@ -664,7 +665,7 @@ exports.getClaimedBlocks = async (req, res) => {
       GROUP BY
        b.block_id, b.date, b.start_time, b.end_time, b.amount, b.status,
        b.location_id, b.device_time_zone_name, b.device_timezone_offset,
-       lc.claim_time,
+       lc.claim_id, lc.claim_time, lc.service_status,  -- ADD THESE to GROUP BY
        l.store_id, l.street_name, l.city, l.region, l.phone, l.postal_code,
        l.store_latitude, l.store_longitude, l.time_zone_code
       ORDER BY b.start_time
@@ -691,10 +692,13 @@ exports.getClaimedBlocks = async (req, res) => {
         
         blocksList.push({
           block_id: row.block_id,
+          claim_id: row.claim_id,           // ADD THIS: Include claim_id
+          claimId: row.claim_id,            // ADD THIS: Alternative naming for compatibility
           startTime: startTimeISO,
           endTime: endTimeISO,
           amount: row.amount,
           status: row.status,
+          service_status: row.service_status || 'accepted',  // ADD THIS: service status
           claimTime: claimTimeISO,
           locationId: row.location_id,
           city: row.city,
@@ -753,6 +757,11 @@ exports.getClaimedBlocks = async (req, res) => {
     });
 
     console.log(`Returning ${Object.keys(sortedGrouped).length} dates with claimed blocks for driver ${driverIdInt}`);
+    console.log(`Total blocks: ${blocksList.length}, Sample block:`, blocksList[0] ? {
+      block_id: blocksList[0].block_id,
+      claim_id: blocksList[0].claim_id,
+      service_status: blocksList[0].service_status
+    } : 'No blocks');
     
     res.json({ 
       success: true, 
