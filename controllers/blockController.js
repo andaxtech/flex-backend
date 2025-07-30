@@ -1583,7 +1583,7 @@ exports.getBlockDetails = async (req, res) => {
     
     console.log(`➡️ GET /api/blocks/${blockId}/details?claim_id=${claimId}`);
     
-    // Get block details with store info - FIXED QUERY
+    // Get block details with store info
     const blockQuery = `
       SELECT 
         b.block_id,
@@ -1597,8 +1597,7 @@ exports.getBlockDetails = async (req, res) => {
         l.time_zone_code,
         l.store_id,
         l.street_name,
-        l.postal_code,
-        l.phone,
+        l.phone
       FROM blocks b
       LEFT JOIN locations l ON b.location_id = l.location_id
       WHERE b.block_id = $1
@@ -1612,14 +1611,12 @@ exports.getBlockDetails = async (req, res) => {
     
     const block = blockResult.rows[0];
     
-    // Get check-in time if available - FIXED TABLE NAME
+    // Get check-in time if available
     const checkInQuery = `
-      SELECT bc.check_in_time 
-      FROM block_claims bc
-      WHERE bc.block_id = $1 AND bc.driver_id = (
-        SELECT driver_id FROM block_claims WHERE block_id = $1 LIMIT 1
-      )
-      ORDER BY bc.check_in_time DESC 
+      SELECT check_in_time 
+      FROM block_claims
+      WHERE block_id = $1 
+      ORDER BY check_in_time DESC 
       LIMIT 1
     `;
     
@@ -1637,12 +1634,12 @@ exports.getBlockDetails = async (req, res) => {
         locationId: block.location_id,
         city: block.city,
         region: block.region,
-        timeZoneCode: block.time_zone_code || block.store_timezone,
+        timeZoneCode: block.time_zone_code,
         store: {
           storeId: block.store_id,
-          address: `${block.street_name}, ${block.store_city}, ${block.store_region} ${block.postal_code}`,
+          address: block.street_name,
           phone: block.phone || '555-0123',
-          timeZoneCode: block.store_timezone
+          timeZoneCode: block.time_zone_code
         }
       },
       checkInTime: checkInTime,
