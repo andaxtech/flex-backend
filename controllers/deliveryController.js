@@ -4,8 +4,9 @@ const extractText = require('../utils/ocr');
 const uploadImage = require('../utils/upload');
 
 exports.startDelivery = async (req, res) => {
-  const { driver_id } = req.body;
+  const { driver_id, block_id, claim_id, device_local_time } = req.body;
   const filePath = req.file?.path;
+  
   if (!driver_id || !filePath) {
     return res.status(400).json({ success: false, error: 'Missing driver_id or photo' });
   }
@@ -27,6 +28,7 @@ exports.startDelivery = async (req, res) => {
       phone_number = null
     } = typeof ocrResult === 'object' ? ocrResult : {};
 
+    // Get store_id from the most recent block claim
     const storeQuery = await pool.query(
       `SELECT l.store_id
        FROM block_claims bc
@@ -41,19 +43,24 @@ exports.startDelivery = async (req, res) => {
 
     const insertQuery = `
       INSERT INTO delivery_logs 
-        (driver_id, order_number, order_total, customer_name, slice_number, total_slices, order_type, payment_status, order_time, order_date, phone_number, store_id, delivery_photo_url, ocr_text, ocr_status)
+        (driver_id, block_id, claim_id, order_number, order_total, customer_name, 
+         slice_number, total_slices, order_type, payment_status, order_time, 
+         order_date, phone_number, store_id, delivery_photo_url, ocr_text, 
+         ocr_status, created_at, device_created_time)
       VALUES 
-        ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), $18)
       RETURNING *;
     `;
 
     const result = await pool.query(insertQuery, [
       driver_id,
+      block_id || null,  // Add block_id
+      claim_id || null,  // Add claim_id
       order_number,
-      order_total,
+      order_total ? parseFloat(order_total) : null,
       customer_name,
-      slice_number,
-      total_slices,
+      slice_number ? parseInt(slice_number) : null,
+      total_slices ? parseInt(total_slices) : null,
       order_type,
       payment_status,
       order_time,
@@ -62,14 +69,22 @@ exports.startDelivery = async (req, res) => {
       store_id,
       imageUrl,
       JSON.stringify(ocrResult),
-      'parsed'
+      'parsed',
+      device_local_time || null  // Add device_local_time
     ]);
 
-    res.json({ success: true, delivery: result.rows[0] });
+    // Return the delivery with ocr_data included
+    const delivery = result.rows[0];
+    
+    res.json({ 
+      success: true, 
+      delivery: {
+        ...delivery,
+        ocr_data: ocrResult  // Include the parsed OCR data for the frontend
+      }
+    });
   } catch (error) {
     console.error('❌ Delivery start failed:', error);
-    res.status(500).json({ success: false, error: 'OCR failed or upload error' });
+    res.status(500).json({ success: false, error: error.message || 'OCR failed or upload error' });
   }
 };
-
-
