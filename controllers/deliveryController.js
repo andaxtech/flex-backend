@@ -42,44 +42,46 @@ exports.startDelivery = async (req, res) => {
     const store_id = storeQuery.rows[0]?.store_id || null;
 
     const insertQuery = `
-  INSERT INTO delivery_logs (
-    driver_id,
-    order_number,
-    order_total,
-    customer_name,
-    store_id,
-    delivery_photo_url,
-    ocr_text,
-    ocr_status,
-    slice_number,
-    total_slices,
-    order_type,
-    payment_status,
-    order_time,
-    order_date,
-    phone_number,
-    block_id,
-    claim_id,
-    device_created_time,
-    delivery_started_at,  -- Add this
-    delivery_status,      -- Add this
-    created_at
-  ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 
-    $11, $12, $13, $14, $15, $16, $17, $18, 
-    NOW(),                -- delivery_started_at
-    'in_progress',        -- delivery_status
-    NOW()
-  ) RETURNING *
-`;
+      INSERT INTO delivery_logs (
+        driver_id,
+        order_number,
+        order_total,
+        customer_name,
+        store_id,
+        delivery_photo_url,
+        ocr_text,
+        ocr_status,
+        slice_number,
+        total_slices,
+        order_type,
+        payment_status,
+        order_time,
+        order_date,
+        phone_number,
+        block_id,
+        claim_id,
+        device_created_time,
+        delivery_started_at,
+        delivery_status,
+        created_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 
+        $11, $12, $13, $14, $15, $16, $17, $18, 
+        NOW(),
+        'in_progress',
+        NOW()
+      ) RETURNING *
+    `;
 
     const result = await pool.query(insertQuery, [
       driver_id,
-      block_id || null,  // Add block_id
-      claim_id || null,  // Add claim_id
       order_number,
       order_total ? parseFloat(order_total) : null,
       customer_name,
+      store_id,
+      imageUrl,
+      JSON.stringify(ocrResult),
+      'parsed',
       slice_number ? parseInt(slice_number) : null,
       total_slices ? parseInt(total_slices) : null,
       order_type,
@@ -87,11 +89,9 @@ exports.startDelivery = async (req, res) => {
       order_time,
       order_date,
       phone_number,
-      store_id,
-      imageUrl,
-      JSON.stringify(ocrResult),
-      'parsed',
-      device_local_time || null  // Add device_local_time
+      block_id || null,
+      claim_id || null,
+      device_local_time || null
     ]);
 
     // Return the delivery with ocr_data included
@@ -108,8 +108,9 @@ exports.startDelivery = async (req, res) => {
     console.error('❌ Delivery start failed:', error);
     res.status(500).json({ success: false, error: error.message || 'OCR failed or upload error' });
   }
-  // Add this function to your deliveryController.js
+}; // THIS WAS MISSING!
 
+// Add this function to your deliveryController.js
 exports.completeDelivery = async (req, res) => {
   const client = await pool.connect();
   try {
