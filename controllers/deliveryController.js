@@ -213,3 +213,47 @@ exports.completeDelivery = async (req, res) => {
     client.release();
   }
 };
+
+// Get delivery logs for a driver or claim
+exports.getDeliveryLogs = async (req, res) => {
+  try {
+    const { driver_id, claim_id, block_id } = req.query;
+    
+    let query = 'SELECT * FROM delivery_logs WHERE 1=1';
+    const params = [];
+    let paramIndex = 1;
+    
+    if (driver_id) {
+      query += ` AND driver_id = ${paramIndex}`;
+      params.push(driver_id);
+      paramIndex++;
+    }
+    
+    if (claim_id) {
+      query += ` AND claim_id = ${paramIndex}`;
+      params.push(claim_id);
+      paramIndex++;
+    }
+    
+    if (block_id) {
+      query += ` AND block_id = ${paramIndex}`;
+      params.push(block_id);
+      paramIndex++;
+    }
+    
+    query += ' ORDER BY created_at DESC';
+    
+    const result = await pool.query(query, params);
+    
+    res.json({
+      success: true,
+      deliveries: result.rows
+    });
+  } catch (error) {
+    console.error('Error fetching delivery logs:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to fetch delivery logs' 
+    });
+  }
+};
