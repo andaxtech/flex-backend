@@ -60,8 +60,8 @@ router.post('/reset-progress/:userId', trainingController.resetTrainingProgress)
 // Verify and create required Cloudinary folder structure
 router.get('/cloudinary/verify-folders', trainingController.verifyCloudinaryFolders);
 
-// Get info about specific Cloudinary folder
-router.get('/cloudinary/folder-info/:folderPath(*)', trainingController.getCloudinaryFolderInfo);
+// Get info about Cloudinary folder (supports nested paths)
+router.get('/cloudinary/folder-info/*', trainingController.getCloudinaryFolderInfo);
 router.get('/cloudinary/folder-info', trainingController.getCloudinaryFolderInfo); // Default to training/h5p
 
 // Upload test H5P content to verify folder works
