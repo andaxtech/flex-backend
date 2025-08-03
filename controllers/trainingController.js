@@ -873,7 +873,7 @@ const verifyCloudinaryFolders = async (req, res) => {
 // Get Cloudinary folder structure info
 const getCloudinaryFolderInfo = async (req, res) => {
   try {
-    const { folderPath } = req.params;
+    const { folderPath } = req.query;
     const targetFolder = folderPath || 'training/h5p';
 
     // Get folder contents
