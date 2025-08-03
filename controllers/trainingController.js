@@ -1,4 +1,12 @@
-const db = require('../config/database'); // Adjust path to your DB config
+const pool = require('../db'); // Adjust path to your DB config
+const cloudinary = require('cloudinary').v2;
+
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
 
 // ===============================================
 // CORE DRIVER JOURNEY FUNCTIONS
@@ -15,7 +23,7 @@ const getNextModule = async (req, res) => {
       FROM training_progress 
       WHERE user_id = $1
     `;
-    const completedResult = await db.query(completedQuery, [userId]);
+    const completedResult = await pool.query(completedQuery, [userId]);
     const completedModuleIds = completedResult.rows.map(row => row.module_id);
 
     // Find next available module (lowest order_index not completed)
@@ -47,7 +55,7 @@ const getNextModule = async (req, res) => {
       queryParams = [JSON.stringify(completedModuleIds), ...completedModuleIds];
     }
 
-    const result = await db.query(nextModuleQuery, queryParams);
+    const result = await pool.query(nextModuleQuery, queryParams);
     
     if (result.rows.length === 0) {
       return res.json({
@@ -97,7 +105,7 @@ const getTrainingProgress = async (req, res) => {
       ORDER BY tm.order_index
     `;
     
-    const progressResult = await db.query(progressQuery, [userId]);
+    const progressResult = await pool.query(progressQuery, [userId]);
 
     // Get total training points from pizza_points
     const pointsQuery = `
@@ -105,7 +113,7 @@ const getTrainingProgress = async (req, res) => {
       FROM pizza_points 
       WHERE driver_id = $1 AND event_type LIKE 'training_%'
     `;
-    const pointsResult = await db.query(pointsQuery, [userId]);
+    const pointsResult = await pool.query(pointsQuery, [userId]);
 
     // Get total available modules count
     const totalModulesQuery = `
@@ -113,7 +121,7 @@ const getTrainingProgress = async (req, res) => {
       FROM training_modules 
       WHERE is_active = true
     `;
-    const totalResult = await db.query(totalModulesQuery);
+    const totalResult = await pool.query(totalModulesQuery);
 
     const completedCount = progressResult.rows.length;
     const totalCount = parseInt(totalResult.rows[0].total_modules);
@@ -157,7 +165,7 @@ const completeModule = async (req, res) => {
     const moduleQuery = `
       SELECT * FROM training_modules WHERE module_id = $1
     `;
-    const moduleResult = await db.query(moduleQuery, [moduleId]);
+    const moduleResult = await pool.query(moduleQuery, [moduleId]);
     
     if (moduleResult.rows.length === 0) {
       return res.status(404).json({
@@ -173,7 +181,7 @@ const completeModule = async (req, res) => {
       SELECT * FROM training_progress 
       WHERE user_id = $1 AND module_id = $2
     `;
-    const existingResult = await db.query(existingProgressQuery, [userId, moduleId]);
+    const existingResult = await pool.query(existingProgressQuery, [userId, moduleId]);
 
     let attempts = 1;
     if (existingResult.rows.length > 0) {
@@ -191,7 +199,7 @@ const completeModule = async (req, res) => {
     }
 
     // Start transaction
-    await db.query('BEGIN');
+    await pool.query('BEGIN');
 
     try {
       // Insert or update progress
@@ -203,7 +211,7 @@ const completeModule = async (req, res) => {
           VALUES ($1, $2, $3, $4, $5, $6, $7)
           RETURNING *
         `;
-        await db.query(insertProgressQuery, [
+        await pool.query(insertProgressQuery, [
           userId, moduleId, 
           passed ? new Date() : null,
           score, attempts, timeSpent || 0, 
@@ -218,7 +226,7 @@ const completeModule = async (req, res) => {
           WHERE user_id = $1 AND module_id = $2
           RETURNING *
         `;
-        await db.query(updateProgressQuery, [
+        await pool.query(updateProgressQuery, [
           userId, moduleId,
           passed ? new Date() : null,
           score, attempts, timeSpent || 0,
@@ -232,10 +240,10 @@ const completeModule = async (req, res) => {
           INSERT INTO pizza_points (driver_id, event_type, points, tag)
           VALUES ($1, 'training_module', $2, $3)
         `;
-        await db.query(insertPointsQuery, [userId, module.points_reward, module.point_tag]);
+        await pool.query(insertPointsQuery, [userId, module.points_reward, module.point_tag]);
       }
 
-      await db.query('COMMIT');
+      await pool.query('COMMIT');
 
       res.json({
         success: true,
@@ -247,7 +255,7 @@ const completeModule = async (req, res) => {
       });
 
     } catch (error) {
-      await db.query('ROLLBACK');
+      await pool.query('ROLLBACK');
       throw error;
     }
 
@@ -283,7 +291,7 @@ const getDriverBadges = async (req, res) => {
       ORDER BY earned_at DESC
     `;
     
-    const result = await db.query(badgesQuery, [userId]);
+    const result = await pool.query(badgesQuery, [userId]);
 
     res.json({
       success: true,
@@ -311,7 +319,7 @@ const awardBadge = async (req, res) => {
       WHERE badge_name = $1 AND user_id IS NULL 
       LIMIT 1
     `;
-    const templateResult = await db.query(badgeTemplateQuery, [badgeName]);
+    const templateResult = await pool.query(badgeTemplateQuery, [badgeName]);
 
     if (templateResult.rows.length === 0) {
       return res.status(404).json({
@@ -327,7 +335,7 @@ const awardBadge = async (req, res) => {
       SELECT * FROM training_badges 
       WHERE user_id = $1 AND badge_name = $2
     `;
-    const existingResult = await db.query(existingBadgeQuery, [userId, badgeName]);
+    const existingResult = await pool.query(existingBadgeQuery, [userId, badgeName]);
 
     if (existingResult.rows.length > 0) {
       return res.status(400).json({
@@ -337,7 +345,7 @@ const awardBadge = async (req, res) => {
     }
 
     // Start transaction
-    await db.query('BEGIN');
+    await pool.query('BEGIN');
 
     try {
       // Award badge
@@ -348,7 +356,7 @@ const awardBadge = async (req, res) => {
         RETURNING *
       `;
       
-      const badgeResult = await db.query(awardBadgeQuery, [
+      const badgeResult = await pool.query(awardBadgeQuery, [
         template.badge_name,
         template.badge_description,
         template.badge_icon_url,
@@ -364,10 +372,10 @@ const awardBadge = async (req, res) => {
           INSERT INTO pizza_points (driver_id, event_type, points, tag)
           VALUES ($1, 'training_badge', $2, $3)
         `;
-        await db.query(insertPointsQuery, [userId, pointsAwarded, template.point_tag]);
+        await pool.query(insertPointsQuery, [userId, pointsAwarded, template.point_tag]);
       }
 
-      await db.query('COMMIT');
+      await pool.query('COMMIT');
 
       res.json({
         success: true,
@@ -376,7 +384,7 @@ const awardBadge = async (req, res) => {
       });
 
     } catch (error) {
-      await db.query('ROLLBACK');
+      await pool.query('ROLLBACK');
       throw error;
     }
 
@@ -401,7 +409,7 @@ const getTrainingStats = async (req, res) => {
       FROM pizza_points 
       WHERE driver_id = $1 AND event_type LIKE 'training_%'
     `;
-    const pointsResult = await db.query(pointsQuery, [userId]);
+    const pointsResult = await pool.query(pointsQuery, [userId]);
 
     // Get badges count
     const badgesQuery = `
@@ -409,7 +417,7 @@ const getTrainingStats = async (req, res) => {
       FROM training_badges 
       WHERE user_id = $1
     `;
-    const badgesResult = await db.query(badgesQuery, [userId]);
+    const badgesResult = await pool.query(badgesQuery, [userId]);
 
     // Get completion stats
     const completionQuery = `
@@ -419,7 +427,7 @@ const getTrainingStats = async (req, res) => {
       FROM training_progress 
       WHERE user_id = $1 AND completed_at IS NOT NULL
     `;
-    const completionResult = await db.query(completionQuery, [userId]);
+    const completionResult = await pool.query(completionQuery, [userId]);
 
     // Calculate level (simple calculation: level = points / 100)
     const totalPoints = parseInt(pointsResult.rows[0].total_training_points);
@@ -459,7 +467,7 @@ const getAllModules = async (req, res) => {
       ORDER BY order_index
     `;
     
-    const result = await db.query(query);
+    const result = await pool.query(query);
 
     res.json({
       success: true,
@@ -486,7 +494,7 @@ const getModuleDetails = async (req, res) => {
       WHERE module_id = $1 AND is_active = true
     `;
     
-    const result = await db.query(query, [moduleId]);
+    const result = await pool.query(query, [moduleId]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({
@@ -528,7 +536,7 @@ const getH5PContent = async (req, res) => {
       WHERE tm.module_id = $1 AND tm.is_active = true
     `;
     
-    const result = await db.query(query, [moduleId]);
+    const result = await pool.query(query, [moduleId]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({
@@ -565,7 +573,7 @@ const saveH5PResult = async (req, res) => {
       RETURNING *
     `;
     
-    const result = await db.query(updateQuery, [userId, moduleId, JSON.stringify(h5pResultData)]);
+    const result = await pool.query(updateQuery, [userId, moduleId, JSON.stringify(h5pResultData)]);
 
     res.json({
       success: true,
@@ -595,7 +603,7 @@ const getTrainingAnalytics = async (req, res) => {
       SELECT COUNT(DISTINCT user_id) as total_drivers
       FROM training_progress
     `;
-    const totalDriversResult = await db.query(totalDriversQuery);
+    const totalDriversResult = await pool.query(totalDriversQuery);
 
     // Completion rates by module
     const moduleStatsQuery = `
@@ -611,7 +619,7 @@ const getTrainingAnalytics = async (req, res) => {
       GROUP BY tm.module_id, tm.title, tm.category
       ORDER BY tm.order_index
     `;
-    const moduleStatsResult = await db.query(moduleStatsQuery);
+    const moduleStatsResult = await pool.query(moduleStatsQuery);
 
     // Top performers
     const topPerformersQuery = `
@@ -629,7 +637,7 @@ const getTrainingAnalytics = async (req, res) => {
       ORDER BY total_points DESC, completed_modules DESC
       LIMIT 10
     `;
-    const topPerformersResult = await db.query(topPerformersQuery);
+    const topPerformersResult = await pool.query(topPerformersQuery);
 
     res.json({
       success: true,
@@ -678,7 +686,7 @@ const getTrainingLeaderboard = async (req, res) => {
       LIMIT $1
     `;
     
-    const result = await db.query(leaderboardQuery, [limit]);
+    const result = await pool.query(leaderboardQuery, [limit]);
 
     res.json({
       success: true,
@@ -713,19 +721,19 @@ const resetTrainingProgress = async (req, res) => {
     }
 
     // Start transaction
-    await db.query('BEGIN');
+    await pool.query('BEGIN');
 
     try {
       // Delete training progress
-      await db.query('DELETE FROM training_progress WHERE user_id = $1', [userId]);
+      await pool.query('DELETE FROM training_progress WHERE user_id = $1', [userId]);
       
       // Delete training badges
-      await db.query('DELETE FROM training_badges WHERE user_id = $1', [userId]);
+      await pool.query('DELETE FROM training_badges WHERE user_id = $1', [userId]);
       
       // Delete training pizza points
-      await db.query('DELETE FROM pizza_points WHERE driver_id = $1 AND event_type LIKE \'training_%\'', [userId]);
+      await pool.query('DELETE FROM pizza_points WHERE driver_id = $1 AND event_type LIKE \'training_%\'', [userId]);
 
-      await db.query('COMMIT');
+      await pool.query('COMMIT');
 
       res.json({
         success: true,
@@ -733,7 +741,7 @@ const resetTrainingProgress = async (req, res) => {
       });
 
     } catch (error) {
-      await db.query('ROLLBACK');
+      await pool.query('ROLLBACK');
       throw error;
     }
 
@@ -742,6 +750,266 @@ const resetTrainingProgress = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to reset training progress',
+      error: error.message
+    });
+  }
+};
+
+// ===============================================
+// CLOUDINARY VERIFICATION FUNCTIONS
+// ===============================================
+
+// Verify and create Cloudinary folder structure
+const verifyCloudinaryFolders = async (req, res) => {
+  try {
+    // Define required folder structure based on training strategy
+    const requiredFolders = [
+      'training/h5p/drivers/onboarding',
+      'training/h5p/drivers/safety',
+      'training/h5p/drivers/customer-service',
+      'training/h5p/drivers/operations',
+      'training/h5p/managers/leadership',
+      'training/h5p/managers/operations',
+      'training/h5p/shared/policies'
+    ];
+
+    const folderStatus = [];
+    const createdFolders = [];
+    const errors = [];
+
+    for (const folderPath of requiredFolders) {
+      try {
+        console.log(`🔍 Checking folder: ${folderPath}`);
+
+        // Check if folder exists by searching for resources in it
+        const searchResult = await cloudinary.search
+          .expression(`folder:${folderPath}`)
+          .max_results(1)
+          .execute();
+
+        let folderExists = false;
+
+        // Also check if folder exists in admin API
+        try {
+          const foldersResult = await cloudinary.api.sub_folders(folderPath.substring(0, folderPath.lastIndexOf('/')));
+          folderExists = foldersResult.folders.some(folder => 
+            `${folderPath.substring(0, folderPath.lastIndexOf('/') + 1)}${folder.name}` === folderPath
+          );
+        } catch (apiError) {
+          // Folder doesn't exist, we'll create it
+          folderExists = false;
+        }
+
+        if (!folderExists) {
+          // Create folder by uploading a placeholder file then deleting it
+          console.log(`📁 Creating folder: ${folderPath}`);
+          
+          const placeholderUpload = await cloudinary.uploader.upload(
+            'data:text/plain;base64,VHJhaW5pbmcgZm9sZGVyIHBsYWNlaG9sZGVy', // "Training folder placeholder" in base64
+            {
+              resource_type: 'raw',
+              public_id: `${folderPath}/.placeholder`,
+              overwrite: true
+            }
+          );
+
+          // Delete the placeholder file
+          await cloudinary.uploader.destroy(`${folderPath}/.placeholder`, {
+            resource_type: 'raw'
+          });
+
+          createdFolders.push(folderPath);
+          folderStatus.push({
+            folder: folderPath,
+            status: 'created',
+            message: 'Folder created successfully'
+          });
+        } else {
+          folderStatus.push({
+            folder: folderPath,
+            status: 'exists',
+            message: 'Folder already exists'
+          });
+        }
+
+      } catch (error) {
+        console.error(`❌ Error with folder ${folderPath}:`, error.message);
+        errors.push({
+          folder: folderPath,
+          error: error.message
+        });
+        folderStatus.push({
+          folder: folderPath,
+          status: 'error',
+          message: error.message
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Cloudinary folder verification completed',
+      summary: {
+        totalFolders: requiredFolders.length,
+        created: createdFolders.length,
+        existing: folderStatus.filter(f => f.status === 'exists').length,
+        errors: errors.length
+      },
+      folderStatus,
+      createdFolders,
+      errors: errors.length > 0 ? errors : undefined
+    });
+
+  } catch (error) {
+    console.error('❌ Error verifying Cloudinary folders:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to verify Cloudinary folders',
+      error: error.message
+    });
+  }
+};
+
+// Get Cloudinary folder structure info
+const getCloudinaryFolderInfo = async (req, res) => {
+  try {
+    const { folderPath } = req.params;
+    const targetFolder = folderPath || 'training/h5p';
+
+    // Get folder contents
+    const result = await cloudinary.search
+      .expression(`folder:${targetFolder}/*`)
+      .sort_by([['created_at', 'desc']])
+      .max_results(50)
+      .execute();
+
+    // Get subfolders
+    let subfolders = [];
+    try {
+      const foldersResult = await cloudinary.api.sub_folders(targetFolder);
+      subfolders = foldersResult.folders;
+    } catch (error) {
+      console.log(`No subfolders found for ${targetFolder}`);
+    }
+
+    res.json({
+      success: true,
+      folder: targetFolder,
+      subfolders: subfolders.map(folder => ({
+        name: folder.name,
+        path: `${targetFolder}/${folder.name}`
+      })),
+      files: result.resources.map(resource => ({
+        public_id: resource.public_id,
+        format: resource.format,
+        resource_type: resource.resource_type,
+        bytes: resource.bytes,
+        created_at: resource.created_at,
+        url: resource.secure_url
+      })),
+      totalFiles: result.total_count
+    });
+
+  } catch (error) {
+    console.error('❌ Error getting Cloudinary folder info:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get folder info',
+      error: error.message
+    });
+  }
+};
+
+// Upload test H5P content to verify folder structure
+const uploadTestH5PContent = async (req, res) => {
+  try {
+    const { folderPath, fileName } = req.body;
+
+    if (!folderPath) {
+      return res.status(400).json({
+        success: false,
+        message: 'folderPath is required'
+      });
+    }
+
+    // Create a simple test H5P content (placeholder)
+    const testContent = {
+      title: 'Test H5P Content',
+      content_type: 'H5P.TestContent',
+      created_at: new Date().toISOString(),
+      test: true
+    };
+
+    // Upload test file
+    const uploadResult = await cloudinary.uploader.upload(
+      `data:application/json;base64,${Buffer.from(JSON.stringify(testContent, null, 2)).toString('base64')}`,
+      {
+        resource_type: 'raw',
+        public_id: `${folderPath}/${fileName || 'test-content'}`,
+        overwrite: true,
+        tags: ['test', 'h5p', 'training']
+      }
+    );
+
+    res.json({
+      success: true,
+      message: 'Test H5P content uploaded successfully',
+      upload: {
+        public_id: uploadResult.public_id,
+        url: uploadResult.secure_url,
+        folder: folderPath,
+        bytes: uploadResult.bytes
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error uploading test H5P content:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to upload test content',
+      error: error.message
+    });
+  }
+};
+
+// Delete test files (cleanup)
+const cleanupTestFiles = async (req, res) => {
+  try {
+    // Find all test files
+    const searchResult = await cloudinary.search
+      .expression('tags:test AND folder:training/h5p/*')
+      .max_results(100)
+      .execute();
+
+    const deletedFiles = [];
+    const errors = [];
+
+    for (const resource of searchResult.resources) {
+      try {
+        await cloudinary.uploader.destroy(resource.public_id, {
+          resource_type: resource.resource_type
+        });
+        deletedFiles.push(resource.public_id);
+      } catch (error) {
+        errors.push({
+          public_id: resource.public_id,
+          error: error.message
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Test file cleanup completed',
+      deleted: deletedFiles,
+      errors: errors.length > 0 ? errors : undefined
+    });
+
+  } catch (error) {
+    console.error('❌ Error cleaning up test files:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to cleanup test files',
       error: error.message
     });
   }
@@ -767,5 +1035,11 @@ module.exports = {
   // Admin/analytics functions
   getTrainingAnalytics,
   getTrainingLeaderboard,
-  resetTrainingProgress
+  resetTrainingProgress,
+
+  // Cloudinary verification functions
+  verifyCloudinaryFolders,
+  getCloudinaryFolderInfo,
+  uploadTestH5PContent,
+  cleanupTestFiles
 };

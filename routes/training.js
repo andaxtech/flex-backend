@@ -53,4 +53,39 @@ router.get('/leaderboard', trainingController.getTrainingLeaderboard);
 // Reset driver's training progress (admin only)
 router.post('/reset-progress/:userId', trainingController.resetTrainingProgress);
 
+// ===============================================
+// CLOUDINARY VERIFICATION ROUTES
+// ===============================================
+
+// Verify and create required Cloudinary folder structure
+router.get('/cloudinary/verify-folders', trainingController.verifyCloudinaryFolders);
+
+// Get info about specific Cloudinary folder
+router.get('/cloudinary/folder-info/:folderPath(*)', trainingController.getCloudinaryFolderInfo);
+router.get('/cloudinary/folder-info', trainingController.getCloudinaryFolderInfo); // Default to training/h5p
+
+// Upload test H5P content to verify folder works
+router.post('/cloudinary/upload-test', trainingController.uploadTestH5PContent);
+
+// Cleanup test files
+router.delete('/cloudinary/cleanup-test', trainingController.cleanupTestFiles);
+
+// Quick Cloudinary connection test
+router.get('/cloudinary/test-connection', async (req, res) => {
+  try {
+    const result = await require('cloudinary').v2.api.ping();
+    res.json({
+      success: true,
+      message: 'Cloudinary connection successful',
+      result
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Cloudinary connection failed',
+      error: error.message
+    });
+  }
+});
+
 module.exports = router;
