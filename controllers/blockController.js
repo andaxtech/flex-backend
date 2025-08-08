@@ -418,12 +418,12 @@ exports.getAvailableBlocks = async (req, res) => {
       )
       SELECT 
         d.driver_id,
-        d.license_expiration,
+        d.driver_license_expiration,
         d.registration_expiration_date,
         vi.latest_insurance_end,
         CASE 
-          WHEN d.license_expiration <= NOW() THEN 'expired'
-          WHEN d.license_expiration <= NOW() + INTERVAL '30 days' THEN 'expiring_soon'
+          WHEN d.driver_license_expiration <= NOW() THEN 'expired'
+          WHEN d.driver_license_expiration <= NOW() + INTERVAL '30 days' THEN 'expiring_soon'
           ELSE 'valid'
         END as license_status,
         CASE 
