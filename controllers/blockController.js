@@ -394,7 +394,7 @@ exports.unclaimBlock = async (req, res) => {
 
 
 
-// API to get available blocks - with IANA timezone support
+/// API to get available blocks - with IANA timezone support
 // API to get available blocks - with eligibility check and specific error messages
 // 1. UPDATE: getAvailableBlocks - Include manager info in the response
 exports.getAvailableBlocks = async (req, res) => {
@@ -406,7 +406,7 @@ exports.getAvailableBlocks = async (req, res) => {
   }
 
   try {
-    // First, check driver eligibility (unchanged)
+    // First, check driver eligibility (UPDATED to use car_details table)
     const eligibilityQuery = `
       WITH valid_insurance AS (
         SELECT 
@@ -419,7 +419,7 @@ exports.getAvailableBlocks = async (req, res) => {
       SELECT 
         d.driver_id,
         d.driver_license_expiration,
-        d.registration_expiration_date,
+        cd.vehicle_registration_expiration,
         vi.latest_insurance_end,
         CASE 
           WHEN d.driver_license_expiration <= NOW() THEN 'expired'
@@ -427,8 +427,8 @@ exports.getAvailableBlocks = async (req, res) => {
           ELSE 'valid'
         END as license_status,
         CASE 
-          WHEN d.registration_expiration_date <= NOW() THEN 'expired'
-          WHEN d.registration_expiration_date <= NOW() + INTERVAL '30 days' THEN 'expiring_soon'
+          WHEN cd.vehicle_registration_expiration <= NOW() THEN 'expired'
+          WHEN cd.vehicle_registration_expiration <= NOW() + INTERVAL '30 days' THEN 'expiring_soon'
           ELSE 'valid'
         END as registration_status,
         CASE 
@@ -437,6 +437,7 @@ exports.getAvailableBlocks = async (req, res) => {
           ELSE 'valid'
         END as insurance_status
       FROM drivers d
+      LEFT JOIN car_details cd ON d.driver_id = cd.driver_id
       LEFT JOIN valid_insurance vi ON d.driver_id = vi.driver_id
       WHERE d.driver_id = $1
     `;
@@ -454,32 +455,32 @@ exports.getAvailableBlocks = async (req, res) => {
     const ineligibilityReasons = [];
     const warnings = [];
 
-    // Check for expired credentials (unchanged)
+    // Check for expired credentials (UPDATED to use correct column names)
     if (driverStatus.license_status === 'expired') {
       ineligibilityReasons.push({
         type: 'license',
-        message: `Your driver's license expired on ${new Date(driverStatus.license_expiration).toLocaleDateString()}`,
-        expiredDate: driverStatus.license_expiration
+        message: `Your driver's license expired on ${new Date(driverStatus.driver_license_expiration).toLocaleDateString()}`,
+        expiredDate: driverStatus.driver_license_expiration
       });
     } else if (driverStatus.license_status === 'expiring_soon') {
       warnings.push({
         type: 'license',
-        message: `Your driver's license expires on ${new Date(driverStatus.license_expiration).toLocaleDateString()}`,
-        expiryDate: driverStatus.license_expiration
+        message: `Your driver's license expires on ${new Date(driverStatus.driver_license_expiration).toLocaleDateString()}`,
+        expiryDate: driverStatus.driver_license_expiration
       });
     }
 
     if (driverStatus.registration_status === 'expired') {
       ineligibilityReasons.push({
         type: 'registration',
-        message: `Your vehicle registration expired on ${new Date(driverStatus.registration_expiration_date).toLocaleDateString()}`,
-        expiredDate: driverStatus.registration_expiration_date
+        message: `Your vehicle registration expired on ${new Date(driverStatus.vehicle_registration_expiration).toLocaleDateString()}`,
+        expiredDate: driverStatus.vehicle_registration_expiration
       });
     } else if (driverStatus.registration_status === 'expiring_soon') {
       warnings.push({
         type: 'registration',
-        message: `Your vehicle registration expires on ${new Date(driverStatus.registration_expiration_date).toLocaleDateString()}`,
-        expiryDate: driverStatus.registration_expiration_date
+        message: `Your vehicle registration expires on ${new Date(driverStatus.vehicle_registration_expiration).toLocaleDateString()}`,
+        expiryDate: driverStatus.vehicle_registration_expiration
       });
     }
 
@@ -622,7 +623,6 @@ exports.getAvailableBlocks = async (req, res) => {
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
-
 
 
 
