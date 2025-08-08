@@ -1,5 +1,5 @@
 // utils/documentOCR.js
-// Backend OCR service for driver documents using OpenAI Vision API
+// Updated with better error handling and debugging
 
 require('dotenv').config();
 const { OpenAI } = require('openai');
@@ -12,47 +12,51 @@ const openai = new OpenAI({
 async function extractDriverLicense(imageUrl, side = 'front') {
   try {
     const prompt = side === 'front' ? `
-You are an OCR extraction engine reading driver licenses. From the front of the license, extract and return a valid JSON object with the following keys:
+You are an OCR extraction engine. Extract text from this driver license front and return ONLY a valid JSON object.
+
+Important: Return ONLY the JSON object, no markdown, no explanation, no code blocks.
 
 {
-  "first_name": "<first name or null>",
-  "last_name": "<last name or null>",
-  "middle_name": "<middle name if present or null>",
-  "license_number": "<driver license number or null>",
-  "date_of_birth": "<date in MM/DD/YYYY format or null>",
-  "expiration_date": "<expiration date in MM/DD/YYYY format or null>",
-  "issue_date": "<issue date in MM/DD/YYYY format if visible or null>",
-  "address": "<full street address or null>",
-  "city": "<city or null>",
-  "state": "<state abbreviation like CA or null>",
-  "zip_code": "<zip code or null>",
-  "sex": "<M/F or null>",
-  "height": "<height like 5-11 or null>",
-  "weight": "<weight in lbs or null>",
-  "eye_color": "<eye color abbreviation like BRN or null>",
-  "hair_color": "<hair color abbreviation or null>",
-  "document_discriminator": "<DD number if visible or null>",
-  "class": "<license class like C or null>",
-  "restrictions": "<restrictions if any or null>",
-  "endorsements": "<endorsements if any or null>"
+  "first_name": "extract first name or null",
+  "last_name": "extract last name or null",
+  "middle_name": "extract middle name if present or null",
+  "license_number": "extract driver license number or null",
+  "date_of_birth": "extract date in MM/DD/YYYY format or null",
+  "expiration_date": "extract expiration date in MM/DD/YYYY format or null",
+  "issue_date": "extract issue date in MM/DD/YYYY format if visible or null",
+  "address": "extract full street address or null",
+  "city": "extract city name or null",
+  "state": "extract state abbreviation like CA or null",
+  "zip_code": "extract 5-digit zip code or null",
+  "sex": "extract M or F or null",
+  "height": "extract height like 5-11 or null",
+  "weight": "extract weight in lbs or null",
+  "eye_color": "extract eye color abbreviation or null",
+  "hair_color": "extract hair color abbreviation or null",
+  "document_discriminator": "extract DD number if visible or null",
+  "class": "extract license class like C or null",
+  "restrictions": "extract restrictions if any or null",
+  "endorsements": "extract endorsements if any or null"
 }
-
-Respond ONLY with a pure JSON object, no explanation or markdown.
     ` : `
-You are an OCR extraction engine reading the back of driver licenses. Extract any visible information including:
+You are an OCR extraction engine. Extract text from this driver license back and return ONLY a valid JSON object.
 
 {
-  "barcode_data": "<any extracted barcode data or null>",
-  "magnetic_stripe_data": "<any magnetic stripe info or null>",
-  "additional_info": "<any other relevant information or null>"
+  "barcode_data": "extract any barcode data or null",
+  "magnetic_stripe_data": "extract any magnetic stripe info or null",
+  "additional_info": "extract any other relevant information or null"
 }
-
-Respond ONLY with a pure JSON object, no explanation or markdown.
     `;
 
+    console.log(`Calling OpenAI for ${side} side extraction...`);
+    
     const response = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [
+        {
+          role: 'system',
+          content: 'You are an OCR system that ONLY returns valid JSON. Never include markdown formatting, code blocks, or explanations.'
+        },
         {
           role: 'user',
           content: [
@@ -62,16 +66,46 @@ Respond ONLY with a pure JSON object, no explanation or markdown.
         },
       ],
       max_tokens: 500,
+      temperature: 0.1, // Lower temperature for more consistent output
     });
 
     const content = response.choices[0]?.message?.content || '';
-    const cleaned = content.replace(/```(?:json)?/g, '').trim();
+    console.log('Raw OpenAI response:', content.substring(0, 200) + '...');
+    
+    // More aggressive cleaning
+    let cleaned = content
+      .replace(/```json\s*/gi, '')
+      .replace(/```\s*/g, '')
+      .replace(/^[^{]*{/, '{')  // Remove everything before first {
+      .replace(/}[^}]*$/, '}')  // Remove everything after last }
+      .trim();
+    
+    console.log('Cleaned response:', cleaned.substring(0, 200) + '...');
 
     try {
-      return JSON.parse(cleaned);
+      const parsed = JSON.parse(cleaned);
+      console.log('Successfully parsed license data');
+      return parsed;
     } catch (err) {
-      console.warn('Could not parse JSON, returning raw content');
-      return null;
+      console.error('JSON Parse Error:', err.message);
+      console.error('Failed to parse:', cleaned);
+      
+      // Return empty structure instead of null
+      return side === 'front' ? {
+        first_name: null,
+        last_name: null,
+        license_number: null,
+        date_of_birth: null,
+        expiration_date: null,
+        address: null,
+        city: null,
+        state: null,
+        zip_code: null
+      } : {
+        barcode_data: null,
+        magnetic_stripe_data: null,
+        additional_info: null
+      };
     }
   } catch (err) {
     console.error('Driver license OCR extraction failed:', err);
@@ -82,39 +116,35 @@ Respond ONLY with a pure JSON object, no explanation or markdown.
 // Extract vehicle registration
 async function extractVehicleRegistration(imageUrl) {
   try {
+    console.log('Calling OpenAI for registration extraction...');
+    
     const response = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [
+        {
+          role: 'system',
+          content: 'You are an OCR system that ONLY returns valid JSON. Never include markdown formatting, code blocks, or explanations.'
+        },
         {
           role: 'user',
           content: [
             {
               type: 'text',
-              text: `
-You are an OCR extraction engine reading vehicle registration documents. Extract and return a valid JSON object with the following keys:
+              text: `Extract text from this vehicle registration and return ONLY a valid JSON object:
 
 {
-  "vin": "<Vehicle Identification Number or null>",
-  "license_plate": "<license plate number or null>",
-  "make": "<vehicle make like Toyota or null>",
-  "model": "<vehicle model like Camry or null>",
-  "year": "<vehicle year like 2020 or null>",
-  "body_type": "<body type like 4D/SEDAN or null>",
-  "color": "<vehicle color or null>",
-  "registration_expiration": "<expiration date in MM/DD/YYYY format or null>",
-  "issue_date": "<issue date in MM/DD/YYYY format or null>",
-  "registered_owner": "<owner name(s) or null>",
-  "owner_address": "<owner address or null>",
-  "odometer": "<odometer reading if visible or null>",
-  "weight": "<vehicle weight if shown or null>",
-  "fuel_type": "<fuel type if shown or null>",
-  "title_number": "<title number if visible or null>",
-  "registration_number": "<registration number or null>",
-  "fees_paid": "<registration fees if shown or null>"
-}
-
-Respond ONLY with a pure JSON object, no explanation or markdown.
-              `,
+  "vin": "extract VIN number or null",
+  "license_plate": "extract license plate or null",
+  "make": "extract vehicle make or null",
+  "model": "extract vehicle model or null",
+  "year": "extract vehicle year or null",
+  "body_type": "extract body type or null",
+  "color": "extract color or null",
+  "registration_expiration": "extract expiration in MM/DD/YYYY or null",
+  "issue_date": "extract issue date in MM/DD/YYYY or null",
+  "registered_owner": "extract owner names or null",
+  "owner_address": "extract address or null"
+}`
             },
             {
               type: 'image_url',
@@ -124,16 +154,34 @@ Respond ONLY with a pure JSON object, no explanation or markdown.
         },
       ],
       max_tokens: 500,
+      temperature: 0.1,
     });
 
     const content = response.choices[0]?.message?.content || '';
-    const cleaned = content.replace(/```(?:json)?/g, '').trim();
+    console.log('Raw registration response:', content.substring(0, 200) + '...');
+    
+    // Clean response
+    let cleaned = content
+      .replace(/```json\s*/gi, '')
+      .replace(/```\s*/g, '')
+      .replace(/^[^{]*{/, '{')
+      .replace(/}[^}]*$/, '}')
+      .trim();
 
     try {
-      return JSON.parse(cleaned);
+      const parsed = JSON.parse(cleaned);
+      console.log('Successfully parsed registration data');
+      console.log('Extracted VIN:', parsed.vin);
+      return parsed;
     } catch (err) {
-      console.warn('Could not parse JSON, returning raw content');
-      return null;
+      console.error('JSON Parse Error:', err.message);
+      return {
+        vin: null,
+        license_plate: null,
+        make: null,
+        model: null,
+        year: null
+      };
     }
   } catch (err) {
     console.error('Registration OCR extraction failed:', err);
@@ -144,38 +192,32 @@ Respond ONLY with a pure JSON object, no explanation or markdown.
 // Extract insurance card
 async function extractInsuranceCard(imageUrl) {
   try {
+    console.log('Calling OpenAI for insurance extraction...');
+    
     const response = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [
+        {
+          role: 'system',
+          content: 'You are an OCR system that ONLY returns valid JSON. Never include markdown formatting, code blocks, or explanations.'
+        },
         {
           role: 'user',
           content: [
             {
               type: 'text',
-              text: `
-You are an OCR extraction engine reading auto insurance cards. Extract and return a valid JSON object with the following keys:
+              text: `Extract text from this auto insurance card and return ONLY a valid JSON object:
 
 {
-  "insurance_company": "<company name like State Farm or null>",
-  "policy_number": "<policy number or null>",
-  "naic_number": "<NAIC number if visible or null>",
-  "effective_date": "<effective date in MM/DD/YYYY format or null>",
-  "expiration_date": "<expiration date in MM/DD/YYYY format or null>",
-  "insured_name": "<primary insured name or null>",
-  "additional_insured": ["<additional insured names if any>"],
-  "vehicle_year": "<vehicle year or null>",
-  "vehicle_make": "<vehicle make or null>",
-  "vehicle_model": "<vehicle model or null>",
-  "vin": "<VIN if visible or null>",
-  "agent_name": "<agent name if shown or null>",
-  "agent_phone": "<agent phone if shown or null>",
-  "company_phone": "<insurance company phone or null>",
-  "company_website": "<company website if shown or null>",
-  "coverage_types": ["<visible coverage types like LIABILITY, COLLISION>"]
-}
-
-Respond ONLY with a pure JSON object, no explanation or markdown.
-              `,
+  "insurance_company": "extract company name or null",
+  "policy_number": "extract policy number or null",
+  "effective_date": "extract effective date in MM/DD/YYYY or null",
+  "expiration_date": "extract expiration in MM/DD/YYYY or null",
+  "insured_name": "extract primary insured name or null",
+  "vehicle_year": "extract year or null",
+  "vehicle_make": "extract make or null",
+  "vehicle_model": "extract model or null"
+}`
             },
             {
               type: 'image_url',
@@ -185,16 +227,30 @@ Respond ONLY with a pure JSON object, no explanation or markdown.
         },
       ],
       max_tokens: 500,
+      temperature: 0.1,
     });
 
     const content = response.choices[0]?.message?.content || '';
-    const cleaned = content.replace(/```(?:json)?/g, '').trim();
+    
+    let cleaned = content
+      .replace(/```json\s*/gi, '')
+      .replace(/```\s*/g, '')
+      .replace(/^[^{]*{/, '{')
+      .replace(/}[^}]*$/, '}')
+      .trim();
 
     try {
-      return JSON.parse(cleaned);
+      const parsed = JSON.parse(cleaned);
+      console.log('Successfully parsed insurance data');
+      return parsed;
     } catch (err) {
-      console.warn('Could not parse JSON, returning raw content');
-      return null;
+      console.error('JSON Parse Error:', err.message);
+      return {
+        insurance_company: null,
+        policy_number: null,
+        effective_date: null,
+        expiration_date: null
+      };
     }
   } catch (err) {
     console.error('Insurance OCR extraction failed:', err);
@@ -205,26 +261,22 @@ Respond ONLY with a pure JSON object, no explanation or markdown.
 // Extract license plate
 async function extractLicensePlate(imageUrl) {
   try {
+    console.log('Calling OpenAI for license plate extraction...');
+    
     const response = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [
+        {
+          role: 'system',
+          content: 'You are an OCR system that extracts license plate numbers. Return ONLY valid JSON.'
+        },
         {
           role: 'user',
           content: [
             {
               type: 'text',
-              text: `
-You are an OCR extraction engine reading license plates. Extract ONLY the license plate number/text.
-
-Return a JSON object:
-{
-  "license_plate": "<exact plate number/text like 7ABC123 or null>",
-  "state": "<state if visible like CA or null>",
-  "plate_type": "<type if visible like passenger, commercial, etc or null>"
-}
-
-Respond ONLY with a pure JSON object, no explanation or markdown.
-              `,
+              text: `Extract the license plate number and return ONLY this JSON:
+{"license_plate": "extracted plate number or null", "state": "state or null"}`
             },
             {
               type: 'image_url',
@@ -234,16 +286,25 @@ Respond ONLY with a pure JSON object, no explanation or markdown.
         },
       ],
       max_tokens: 100,
+      temperature: 0.1,
     });
 
     const content = response.choices[0]?.message?.content || '';
-    const cleaned = content.replace(/```(?:json)?/g, '').trim();
+    
+    let cleaned = content
+      .replace(/```json\s*/gi, '')
+      .replace(/```\s*/g, '')
+      .replace(/^[^{]*{/, '{')
+      .replace(/}[^}]*$/, '}')
+      .trim();
 
     try {
-      return JSON.parse(cleaned);
+      const parsed = JSON.parse(cleaned);
+      console.log('Successfully parsed license plate:', parsed.license_plate);
+      return parsed;
     } catch (err) {
-      console.warn('Could not parse JSON, returning raw content');
-      return null;
+      console.error('JSON Parse Error:', err.message);
+      return { license_plate: null, state: null };
     }
   } catch (err) {
     console.error('License plate OCR extraction failed:', err);
@@ -253,6 +314,8 @@ Respond ONLY with a pure JSON object, no explanation or markdown.
 
 // Main extraction function that handles all document types
 async function extractDocument(imageUrl, documentType) {
+  console.log(`Starting OCR extraction for document type: ${documentType}`);
+  
   const extractors = {
     'license_front': () => extractDriverLicense(imageUrl, 'front'),
     'license_back': () => extractDriverLicense(imageUrl, 'back'),
@@ -263,10 +326,13 @@ async function extractDocument(imageUrl, documentType) {
 
   const extractor = extractors[documentType];
   if (!extractor) {
+    console.error(`Unknown document type: ${documentType}`);
     throw new Error(`Unknown document type: ${documentType}`);
   }
 
-  return await extractor(imageUrl);
+  const result = await extractor(imageUrl);
+  console.log(`Extraction complete for ${documentType}:`, result ? 'Success' : 'Failed');
+  return result;
 }
 
 // Format dates to MM/DD/YYYY
@@ -309,19 +375,27 @@ function formatDate(dateStr) {
 
 // Validate extracted data
 function validateExtractedData(data, documentType) {
+  if (!data) {
+    return { isValid: false, errors: ['No data extracted'], data: {} };
+  }
+
   const validations = {
     license_front: {
-      required: ['first_name', 'last_name', 'license_number', 'date_of_birth'],
+      required: ['first_name', 'last_name', 'license_number'],
       dateFields: ['date_of_birth', 'expiration_date', 'issue_date'],
     },
     registration: {
-      required: ['vin'],
+      required: [],  // VIN is important but not always required
       dateFields: ['registration_expiration', 'issue_date'],
     },
     insurance: {
-      required: ['insurance_company', 'policy_number'],
+      required: ['insurance_company'],
       dateFields: ['effective_date', 'expiration_date'],
     },
+    plate: {
+      required: [],
+      dateFields: [],
+    }
   };
 
   const validation = validations[documentType];
