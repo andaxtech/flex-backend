@@ -7,7 +7,8 @@ const authRoutes = require('./routes/auth');
 const blockRoutes = require('./routes/blocks');
 const deliveryRoutes = require('./routes/delivery');
 const driverRoutes = require('./routes/drivers');
-const trainingRoutes = require('./routes/training'); // NEW: Training routes
+const trainingRoutes = require('./routes/training');
+const driverSignupRoutes = require('./routes/driver-signup'); // NEW: Driver signup with OCR
 
 // Import the cron job utilities
 const { startCronJobs, runInitialCleanup } = require('./utils/cron');
@@ -17,8 +18,8 @@ const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ limit: '10mb', extended: true }));
+app.use(express.json({ limit: '50mb' })); // UPDATED: Increased limit for base64 images
+app.use(express.urlencoded({ limit: '50mb', extended: true })); // UPDATED: Increased limit
 
 // Request logger (moved up for better logging)
 app.use((req, res, next) => {
@@ -31,11 +32,12 @@ app.use('/api', authRoutes);
 app.use('/api', blockRoutes);
 app.use('/api', deliveryRoutes);
 app.use('/api', driverRoutes);
-app.use('/api/training', trainingRoutes); // NEW: Training API endpoints
+app.use('/api/training', trainingRoutes);
+app.use('/', driverSignupRoutes); // NEW: OCR routes - mounted at root to get /api/ocr/extract-document
 
 // Health check
 app.get('/', (req, res) => {
-  res.send('🚀 Flex Backend is Running with Driver Training!');
+  res.send('🚀 Flex Backend is Running with Driver Training & OCR!');
 });
 
 // Training system health check
@@ -43,6 +45,16 @@ app.get('/api/health/training', (req, res) => {
   res.json({ 
     status: 'OK', 
     message: '🎓 Driver Training System Active',
+    timestamp: new Date().toISOString() 
+  });
+});
+
+// OCR system health check
+app.get('/api/health/ocr', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    message: '📸 OCR System Active',
+    endpoints: ['/api/ocr/extract-document'],
     timestamp: new Date().toISOString() 
   });
 });
@@ -57,7 +69,9 @@ app.use((err, req, res, next) => {
 app.listen(PORT, async () => {
   console.log(`✅ Server is running on port ${PORT}`);
   console.log(`🎓 Driver Training System: ACTIVE`);
+  console.log(`📸 OCR System: ACTIVE`);
   console.log(`📚 Training API: http://localhost:${PORT}/api/training`);
+  console.log(`🔍 OCR API: http://localhost:${PORT}/api/ocr/extract-document`);
   
   // Start the cron jobs
   startCronJobs();
