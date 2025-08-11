@@ -253,13 +253,19 @@ async function extractInsuranceCard(imageUrl) {
     "effective_date": "extract effective date in MM/DD/YYYY or null",
     "expiration_date": "extract expiration in MM/DD/YYYY or null",
     "insured_name": "extract primary insured name or null",
+    "named_drivers": ["list all named drivers on the policy"],
     "vehicle_year": "extract year or null",
     "vehicle_make": "extract make or null",
-    "vehicle_model": "extract model or null"
+    "vehicle_model": "extract model or null",
+    "vehicle_vin": "extract VIN if visible or null"
   },
   "validity": {
     "currently_active": true/false,
     "appears_genuine": true/false
+  },
+  "driver_verification": {
+    "has_multiple_drivers": true/false,
+    "drivers_listed": ["array of driver names found on card"]
   }
 }`
             },
@@ -527,6 +533,46 @@ function validateExtractedData(data, documentType) {
   };
 }
 
+// Add new function for face matching
+async function compareFaces(profilePhotoUrl, licensePhotoUrl) {
+  try {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: `Compare these two photos and verify:
+1. Is the profile photo a real person (not a photo of a photo/screen)?
+2. Do both photos show the same person?
+3. Rate the match confidence (0-100)
+
+Return JSON:
+{
+  "is_real_person": true/false,
+  "is_same_person": true/false,
+  "match_confidence": 0-100,
+  "issues": ["list any: photo_of_photo, different_person, poor_quality, face_obscured"],
+  "details": "brief explanation"
+}`
+          },
+          { type: 'image_url', image_url: { url: profilePhotoUrl } },
+          { type: 'image_url', image_url: { url: licensePhotoUrl } }
+        ]
+      }],
+      max_tokens: 300,
+      temperature: 0.1
+    });
+
+    const content = response.choices[0]?.message?.content || '';
+    return JSON.parse(content.replace(/```json\s*/gi, '').replace(/```/g, '').trim());
+  } catch (error) {
+    console.error('Face comparison error:', error);
+    return null;
+  }
+}
+
 module.exports = {
   extractDocument,
   extractDriverLicense,
@@ -535,4 +581,5 @@ module.exports = {
   extractLicensePlate,
   validateVehiclePhoto,
   validateExtractedData,
+  compareFaces,
 };
