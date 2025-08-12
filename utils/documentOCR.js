@@ -543,27 +543,33 @@ async function compareFaces(profilePhotoUrl, licensePhotoUrl) {
         content: [
           {
             type: 'text',
-            text: `Compare these two photos for identity verification:
-1. Check if the profile photo appears to be a direct photo of a person (not obviously a photo of another photo/screen/document)
-2. Check if both photos likely show the same person
-3. Rate the match confidence (0-100)
-
-BE LENIENT - Only mark is_real_person as false if there are CLEAR signs it's a photo of another image, such as:
-- Visible screen bezels or monitor edges
-- Paper edges or document borders visible
-- Obvious pixelation from photographing a screen
-- Multiple layers of reflection indicating photo-of-photo
-
-Normal lighting issues, shadows, or slight reflections should NOT disqualify the photo.
-
-Return JSON:
-{
-  "is_real_person": true/false,
-  "is_same_person": true/false,
-  "match_confidence": 0-100,
-  "issues": ["list only MAJOR issues"],
-  "details": "brief explanation"
-}`
+            text: `Compare these two face photos for identity verification.
+    
+    IMPORTANT: Be VERY LENIENT. Normal selfies often have:
+    - Different lighting than ID photos
+    - Different angles
+    - Shadows or slight reflections
+    - Different facial expressions
+    - Time differences (person may look older/younger)
+    - Different camera quality
+    
+    Only flag is_real_person as false if you see OBVIOUS signs like:
+    - Computer/phone screen bezels visible in the image
+    - Clear evidence it's a photo of a printed photo
+    - Multiple layers of screens/glass visible
+    
+    Only flag is_same_person as false if the faces are CLEARLY different people.
+    
+    Give people the benefit of the doubt - if it could reasonably be the same person, mark it as true.
+    
+    Return JSON:
+    {
+      "is_real_person": true/false,
+      "is_same_person": true/false,
+      "match_confidence": 0-100,
+      "issues": [],
+      "details": "brief explanation"
+    }`
           },
           { type: 'image_url', image_url: { url: profilePhotoUrl } },
           { type: 'image_url', image_url: { url: licensePhotoUrl } }
