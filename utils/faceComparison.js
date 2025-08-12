@@ -1,5 +1,6 @@
 // utils/faceComparison.js
 const AWS = require('aws-sdk');
+require('dotenv').config();
 
 // Configure AWS
 AWS.config.update({
@@ -160,9 +161,17 @@ Return a JSON response:
 
 // Main comparison function with fallback
 async function compareFaces(profilePhoto, licensePhoto) {
-  try {
-    // Try AWS Rekognition first
-    if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+    try {
+      // Debug log to check AWS config
+      console.log('[Face Comparison] AWS Config:', {
+        hasAccessKey: !!process.env.AWS_ACCESS_KEY_ID,
+        hasSecretKey: !!process.env.AWS_SECRET_ACCESS_KEY,
+        region: process.env.AWS_REGION || 'not set',
+        accessKeyPreview: process.env.AWS_ACCESS_KEY_ID ? process.env.AWS_ACCESS_KEY_ID.substring(0, 4) + '...' : 'missing'
+      });
+      
+      // Try AWS Rekognition first
+      if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
       console.log('[Face Comparison] Using AWS Rekognition');
       return await compareFacesAWS(profilePhoto, licensePhoto);
     }
