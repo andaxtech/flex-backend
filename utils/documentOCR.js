@@ -8,6 +8,17 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// Add debug logging
+const DEBUG = true; // Set to false in production
+
+function debugLog(label, data) {
+  if (DEBUG) {
+    console.log(`\n[DEBUG - ${new Date().toISOString()}] ${label}:`);
+    console.log(JSON.stringify(data, null, 2));
+    console.log('-------------------\n');
+  }
+}
+
 // Extract driver license information
 async function extractDriverLicense(imageUrl, side = 'front') {
   try {
@@ -536,6 +547,13 @@ function validateExtractedData(data, documentType) {
 // Add new function for face matching
 async function compareFaces(profilePhotoUrl, licensePhotoUrl) {
   try {
+    debugLog('Face Match - Input URLs', {
+      profileLength: profilePhotoUrl?.length || 0,
+      licenseLength: licensePhotoUrl?.length || 0,
+      profilePreview: profilePhotoUrl?.substring(0, 100) + '...',
+      licensePreview: licensePhotoUrl?.substring(0, 100) + '...'
+    });
+
     const response = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [{
@@ -543,33 +561,7 @@ async function compareFaces(profilePhotoUrl, licensePhotoUrl) {
         content: [
           {
             type: 'text',
-            text: `Compare these two face photos for identity verification.
-    
-    IMPORTANT: Be VERY LENIENT. Normal selfies often have:
-    - Different lighting than ID photos
-    - Different angles
-    - Shadows or slight reflections
-    - Different facial expressions
-    - Time differences (person may look older/younger)
-    - Different camera quality
-    
-    Only flag is_real_person as false if you see OBVIOUS signs like:
-    - Computer/phone screen bezels visible in the image
-    - Clear evidence it's a photo of a printed photo
-    - Multiple layers of screens/glass visible
-    
-    Only flag is_same_person as false if the faces are CLEARLY different people.
-    
-    Give people the benefit of the doubt - if it could reasonably be the same person, mark it as true.
-    
-    Return JSON:
-    {
-      "is_real_person": true/false,
-      "is_same_person": true/false,
-      "match_confidence": 0-100,
-      "issues": [],
-      "details": "brief explanation"
-    }`
+            text: `Compare these two face photos for identity verification...` // your existing prompt
           },
           { type: 'image_url', image_url: { url: profilePhotoUrl } },
           { type: 'image_url', image_url: { url: licensePhotoUrl } }
@@ -580,8 +572,18 @@ async function compareFaces(profilePhotoUrl, licensePhotoUrl) {
     });
 
     const content = response.choices[0]?.message?.content || '';
-    return JSON.parse(content.replace(/```json\s*/gi, '').replace(/```/g, '').trim());
+    debugLog('Face Match - OpenAI Raw Response', content);
+    
+    const result = JSON.parse(content.replace(/```json\s*/gi, '').replace(/```/g, '').trim());
+    debugLog('Face Match - Parsed Result', result);
+    
+    return result;
   } catch (error) {
+    debugLog('Face Match - Error', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
     console.error('Face comparison error:', error);
     return null;
   }
