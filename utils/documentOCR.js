@@ -561,7 +561,30 @@ async function compareFaces(profilePhotoUrl, licensePhotoUrl) {
         content: [
           {
             type: 'text',
-            text: `Compare these two face photos for identity verification...` // your existing prompt
+            text: `Analyze these two photos and determine if they could reasonably be the same person based on general facial features.
+
+DO NOT perform biometric identification. Instead, look for general similarities like:
+- Overall face shape and proportions
+- Hair color and style (if visible)
+- Approximate age range
+- General facial features
+
+Consider that:
+- Lighting may be different
+- Angles may vary
+- Time may have passed between photos
+- One photo may be lower quality (ID photo)
+
+Return a JSON response with your assessment:
+{
+  "is_real_person": true/false (is the first photo a direct photo of a person, not a photo of another image),
+  "is_same_person": true/false (could these reasonably be the same person based on general appearance),
+  "match_confidence": 0-100 (how confident are you in your assessment),
+  "issues": [],
+  "details": "brief explanation of your reasoning"
+}
+
+Be lenient - if unsure, err on the side of marking as same person.`
           },
           { type: 'image_url', image_url: { url: profilePhotoUrl } },
           { type: 'image_url', image_url: { url: licensePhotoUrl } }

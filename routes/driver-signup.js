@@ -43,7 +43,7 @@ router.post('/api/ocr/compare-faces',
     console.log('[FACE MATCH] Body size:', JSON.stringify(req.body).length, 'bytes');
     
     try {
-      const { compareFaces } = require('../utils/documentOCR');
+      const { compareFaces } = require('../utils/faceComparison');
       
       // Get photos from request body (they come as base64 strings from frontend)
       const profilePhoto = req.body.profilePhoto;
