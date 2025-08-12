@@ -543,17 +543,25 @@ async function compareFaces(profilePhotoUrl, licensePhotoUrl) {
         content: [
           {
             type: 'text',
-            text: `Compare these two photos and verify:
-1. Is the profile photo a real person (not a photo of a photo/screen)?
-2. Do both photos show the same person?
+            text: `Compare these two photos for identity verification:
+1. Check if the profile photo appears to be a direct photo of a person (not obviously a photo of another photo/screen/document)
+2. Check if both photos likely show the same person
 3. Rate the match confidence (0-100)
+
+BE LENIENT - Only mark is_real_person as false if there are CLEAR signs it's a photo of another image, such as:
+- Visible screen bezels or monitor edges
+- Paper edges or document borders visible
+- Obvious pixelation from photographing a screen
+- Multiple layers of reflection indicating photo-of-photo
+
+Normal lighting issues, shadows, or slight reflections should NOT disqualify the photo.
 
 Return JSON:
 {
   "is_real_person": true/false,
   "is_same_person": true/false,
   "match_confidence": 0-100,
-  "issues": ["list any: photo_of_photo, different_person, poor_quality, face_obscured"],
+  "issues": ["list only MAJOR issues"],
   "details": "brief explanation"
 }`
           },
