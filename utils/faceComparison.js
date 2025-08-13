@@ -1,3 +1,4 @@
+//for face matching only during the sign up process- evaluates if the profile picture matches the driver license image. 
 // utils/faceComparison.js
 const AWS = require('aws-sdk');
 require('dotenv').config();
