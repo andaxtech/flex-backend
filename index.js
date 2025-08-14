@@ -3,7 +3,7 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 dotenv.config();
 
-const authRoutes = require('./routes/auth');
+
 const blockRoutes = require('./routes/blocks');
 const deliveryRoutes = require('./routes/delivery');
 const driverRoutes = require('./routes/drivers');
@@ -28,7 +28,6 @@ app.use((req, res, next) => {
 });
 
 // Route mounting
-app.use('/api', authRoutes);
 app.use('/api', blockRoutes);
 app.use('/api', deliveryRoutes);
 app.use('/api', driverRoutes);
