@@ -1,6 +1,5 @@
 // FLEX-BACKEND/controllers/driverController.js
 const pool = require('../db');
-const bcrypt = require('bcrypt');
 
 exports.getDrivers = async (req, res) => {
   try {
@@ -25,6 +24,7 @@ exports.getDriverById = async (req, res) => {
         phone_number,
         email,
         reference_face_photo_url,
+        profile_photo_url,
         status
       FROM drivers 
       WHERE driver_id = $1
@@ -44,8 +44,8 @@ exports.getDriverById = async (req, res) => {
       last_name: driver.last_name,
       phone: driver.phone_number,
       email: driver.email,
-      profile_image: driver.reference_face_photo_url || '',
-      profileImage: driver.reference_face_photo_url || '', // For compatibility with frontend
+      profile_image: driver.profile_photo_url || driver.reference_face_photo_url || '',
+      profileImage: driver.profile_photo_url || driver.reference_face_photo_url || '', // For compatibility with frontend
       status: driver.status
     });
   } catch (error) {
@@ -54,57 +54,214 @@ exports.getDriverById = async (req, res) => {
   }
 };
 
-exports.signupDriver = async (req, res) => {
+// Get driver by user_id (for authenticated drivers)
+exports.getDriverByUserId = async (req, res) => {
+  try {
+    const userId = parseInt(req.params.userId);
+    
+    const query = `
+      SELECT 
+        d.driver_id,
+        d.first_name,
+        d.last_name,
+        d.phone_number,
+        d.email,
+        d.profile_photo_url,
+        d.reference_face_photo_url,
+        d.status,
+        d.city,
+        d.zip_code,
+        u.clerk_user_id
+      FROM drivers d
+      INNER JOIN users u ON d.user_id = u.user_id
+      WHERE d.user_id = $1
+    `;
+    
+    const result = await pool.query(query, [userId]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Driver not found' });
+    }
+    
+    const driver = result.rows[0];
+    res.json({
+      driver_id: driver.driver_id,
+      name: `${driver.first_name} ${driver.last_name}`,
+      first_name: driver.first_name,
+      last_name: driver.last_name,
+      phone: driver.phone_number,
+      email: driver.email,
+      profile_image: driver.profile_photo_url || driver.reference_face_photo_url || '',
+      status: driver.status,
+      city: driver.city,
+      zip_code: driver.zip_code,
+      clerk_user_id: driver.clerk_user_id
+    });
+  } catch (error) {
+    console.error('Error fetching driver by user_id:', error);
+    res.status(500).json({ error: 'Failed to fetch driver' });
+  }
+};
+
+// Get driver by Clerk ID (for Clerk authentication)
+exports.getDriverByClerkId = async (req, res) => {
+  try {
+    const clerkUserId = req.params.clerkId;
+    
+    const query = `
+      SELECT 
+        d.driver_id,
+        d.first_name,
+        d.last_name,
+        d.phone_number,
+        d.email,
+        d.profile_photo_url,
+        d.reference_face_photo_url,
+        d.status,
+        d.city,
+        d.zip_code,
+        u.user_id,
+        u.role
+      FROM users u
+      INNER JOIN drivers d ON u.user_id = d.user_id
+      WHERE u.clerk_user_id = $1
+    `;
+    
+    const result = await pool.query(query, [clerkUserId]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Driver not found' });
+    }
+    
+    const driver = result.rows[0];
+    res.json({
+      driver_id: driver.driver_id,
+      user_id: driver.user_id,
+      name: `${driver.first_name} ${driver.last_name}`,
+      first_name: driver.first_name,
+      last_name: driver.last_name,
+      phone: driver.phone_number,
+      email: driver.email,
+      profile_image: driver.profile_photo_url || driver.reference_face_photo_url || '',
+      status: driver.status,
+      city: driver.city,
+      zip_code: driver.zip_code,
+      role: driver.role
+    });
+  } catch (error) {
+    console.error('Error fetching driver by Clerk ID:', error);
+    res.status(500).json({ error: 'Failed to fetch driver' });
+  }
+};
+
+// Update driver status
+exports.updateDriverStatus = async (req, res) => {
   const client = await pool.connect();
   try {
+    const driverId = parseInt(req.params.id);
+    const { status } = req.body;
+    
+    const validStatuses = ['pending', 'pending_review', 'active', 'inactive', 'suspended'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ error: 'Invalid status' });
+    }
+    
     await client.query('BEGIN');
-    const {
-      username, password, email, first_name, last_name, phone_number,
-      birth_date, license_number, license_expiration,
-      car_make, car_model, car_year, car_color, license_plate, vin_number,
-      insurance_provider, insurance_policy_number, policy_start_date, policy_end_date,
-      account_holder_first_name, account_holder_last_name, bank_name, bank_account_number, routing_number
-    } = req.body;
-
-    const password_hash = await bcrypt.hash(password, 10);
-    const userRes = await client.query(
-      'INSERT INTO users (username, password_hash, email) VALUES ($1, $2, $3) RETURNING user_id',
-      [username, password_hash, email]
+    
+    // Update driver status
+    await client.query(
+      'UPDATE drivers SET status = $1, updated_at = NOW() WHERE driver_id = $2',
+      [status, driverId]
     );
-    const user_id = userRes.rows[0].user_id;
-
-    const driverRes = await client.query(
-      `INSERT INTO drivers (user_id, first_name, last_name, phone_number, email, license_number, license_expiration, birth_date, registration_expiration_date, status) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9) RETURNING driver_id`,
-      [user_id, first_name, last_name, phone_number, email, license_number, license_expiration, birth_date, 'pending']
-    );
-    const driver_id = driverRes.rows[0].driver_id;
-
-    await client.query(`INSERT INTO car_details (driver_id, make, model, year, color, license_plate, vin_number) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [driver_id, car_make, car_model, car_year, car_color, license_plate, vin_number]
-    );
-
-    await client.query(`INSERT INTO insurance_details (driver_id, provider, policy_number, start_date, end_date) 
-      VALUES ($1, $2, $3, $4, $5)`,
-      [driver_id, insurance_provider, insurance_policy_number, policy_start_date, policy_end_date]
-    );
-
-    await client.query(`INSERT INTO driver_banking_info (driver_id, account_holder_first_name, account_holder_last_name, bank_name, account_number, routing_number) 
-      VALUES ($1, $2, $3, $4, $5, $6)`,
-      [driver_id, account_holder_first_name, account_holder_last_name, bank_name, bank_account_number, routing_number]
-    );
-
+    
+    // If driver is approved, update user status too
+    if (status === 'active') {
+      await client.query(
+        `UPDATE users SET status = 'active' 
+         WHERE user_id = (SELECT user_id FROM drivers WHERE driver_id = $1)`,
+        [driverId]
+      );
+    }
+    
     await client.query('COMMIT');
-    res.status(201).json({ message: 'Driver registration complete and will be reviewed' });
-  } catch (err) {
+    
+    res.json({ 
+      success: true, 
+      message: `Driver status updated to ${status}` 
+    });
+  } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Signup error:', err);
-    res.status(500).json({ error: 'Signup failed' });
+    console.error('Error updating driver status:', error);
+    res.status(500).json({ error: 'Failed to update driver status' });
   } finally {
     client.release();
   }
 };
+
+// Get driver's car details
+exports.getDriverCarDetails = async (req, res) => {
+  try {
+    const driverId = parseInt(req.params.id);
+    
+    const query = `
+      SELECT 
+        car_id,
+        car_make,
+        car_model,
+        car_year,
+        car_color,
+        vin_number,
+        license_plate,
+        vehicle_registration_expiration,
+        inspection_status
+      FROM car_details 
+      WHERE driver_id = $1
+    `;
+    
+    const result = await pool.query(query, [driverId]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Car details not found' });
+    }
+    
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error fetching car details:', error);
+    res.status(500).json({ error: 'Failed to fetch car details' });
+  }
+};
+
+// Get driver's insurance details
+exports.getDriverInsuranceDetails = async (req, res) => {
+  try {
+    const driverId = parseInt(req.params.id);
+    
+    const query = `
+      SELECT 
+        insurance_id,
+        insurance_provider,
+        insurance_policy_number,
+        policy_start_date,
+        policy_end_date,
+        insurance_verification_issues,
+        insurance_explanation
+      FROM insurance_details 
+      WHERE driver_id = $1
+    `;
+    
+    const result = await pool.query(query, [driverId]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Insurance details not found' });
+    }
+    
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error fetching insurance details:', error);
+    res.status(500).json({ error: 'Failed to fetch insurance details' });
+  }
+};
+
 exports.getNextBlock = async (req, res) => {
   try {
     const driverId = parseInt(req.params.id);

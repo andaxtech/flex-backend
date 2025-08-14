@@ -3,6 +3,8 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const ocrController = require('../controllers/ocrController');
+const pool = require('../db'); // Add this line after other requires
+const { encrypt, hash } = require('../utils/encryption');
 
 // Configure multer properly
 const upload = multer({
@@ -150,42 +152,278 @@ router.post('/api/ocr/compare-faces',
 
 // Your existing signup-driver endpoint with debugging
 router.post('/signup-driver', async (req, res) => {
+  const client = await pool.connect();
+  
   console.log('\n========================================');
   console.log('[SIGNUP] Driver signup called at:', new Date().toISOString());
   console.log('[SIGNUP] Request body keys:', Object.keys(req.body));
   
   try {
-    const driverData = req.body;
     
-    // Log important fields
+    
+    const driverData = req.body;
+
+    // Validate required fields
+const requiredFields = [
+  'first_name', 'last_name', 'email', 'phone_number',
+  'driver_license_number', 'driver_license_expiration',
+  'clerk_user_id', 'car_make', 'car_model', 'car_year',
+  'insurance_provider', 'insurance_policy_number'
+];
+
+const missingFields = requiredFields.filter(field => !driverData[field]);
+if (missingFields.length > 0) {
+  console.log('[SIGNUP] Missing required fields:', missingFields);
+  return res.status(400).json({
+    success: false,
+    error: 'Missing required fields',
+    missingFields: missingFields
+  });
+}
+
+    // START TRANSACTION AFTER VALIDATION
+    await client.query('BEGIN');
+
+    // Encrypt sensitive fields
+    const encryptedData = {
+      ...driverData,
+      // Encrypt these fields
+      document_discriminator_encrypted: encrypt(driverData.document_discriminator_encrypted),
+      residence_address_encrypted: encrypt(driverData.residence_address_encrypted),
+      registered_owner_names_encrypted: encrypt(driverData.registered_owner_names_encrypted),
+      ca_title_number_encrypted: encrypt(driverData.ca_title_number_encrypted),
+      insured_names_encrypted: encrypt(driverData.insured_names_encrypted),
+      named_drivers_encrypted: encrypt(driverData.named_drivers_encrypted),
+      ssn_encrypted: encrypt(driverData.ssn),
+      
+      // Hash SSN for searching (if needed)
+      ssn_hash: hash(driverData.ssn),
+    };
+
+
+
+
+    
+    // Log important fields with UPDATED field names
     console.log('[SIGNUP] Driver name:', driverData.first_name, driverData.last_name);
     console.log('[SIGNUP] Email:', driverData.email);
-    console.log('[SIGNUP] License number:', driverData.license_number);
+    console.log('[SIGNUP] License number:', driverData.driver_license_number); // UPDATED
     console.log('[SIGNUP] Face match verified:', driverData.face_match_verified);
     console.log('[SIGNUP] Requires manual review:', driverData.requires_manual_review);
     
-    // Your existing driver signup logic here...
-    // This is where you'd save to database, etc.
+    // Step 1: Insert into users table (with clerk_user_id, no password)
+    const userRes = await client.query(
+      'INSERT INTO users (email, clerk_user_id, role, status, is_verified) VALUES ($1, $2, $3, $4, $5) RETURNING user_id',
+      [driverData.email, driverData.clerk_user_id, 'driver', 'pending', true]
+    );
+    const user_id = userRes.rows[0].user_id;
+    console.log('[SIGNUP] Created user with ID:', user_id);
     
-    console.log('[SIGNUP] SUCCESS - Driver registered');
+    // Step 2: Insert into drivers table
+    const driverRes = await client.query(
+      `INSERT INTO drivers (
+        user_id,
+        first_name,
+        last_name,
+        phone_number,
+        email,
+        driver_license_number,
+        driver_license_expiration,
+        birth_date,
+        driver_license_state_issued,
+        document_discriminator_encrypted,
+        residence_address_encrypted,
+        driver_license_photo_front_url,
+        driver_license_photo_back_url,
+        profile_photo_url,
+        reference_face_photo_url,
+        reference_face_uploaded_at,
+        city,
+        zip_code,
+        status,
+        email_verified,
+        phone_verified
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+      RETURNING driver_id`,
+      [
+        user_id,
+        driverData.first_name,
+        driverData.last_name,
+        driverData.phone_number,
+        driverData.email,
+        driverData.driver_license_number,
+        driverData.driver_license_expiration,
+        driverData.birth_date,
+        driverData.driver_license_state_issued,
+        driverData.document_discriminator_encrypted,
+        driverData.residence_address_encrypted,
+        driverData.driver_license_photo_front_url,
+        driverData.driver_license_photo_back_url,
+        driverData.profile_photo_url,
+        driverData.reference_face_photo_url,
+        driverData.reference_face_uploaded_at,
+        driverData.city,
+        driverData.zip_code,
+        driverData.requires_manual_review ? 'pending_review' : 'pending',
+        true, // email_verified (from Clerk)
+        true  // phone_verified (from Clerk)
+      ]
+    );
+    const driver_id = driverRes.rows[0].driver_id;
+    console.log('[SIGNUP] Created driver with ID:', driver_id);
+    
+    // Step 3: Insert into car_details table
+    const carRes = await client.query(
+      `INSERT INTO car_details (
+        driver_id,
+        car_make,
+        car_model,
+        car_year,
+        car_color,
+        body_type,
+        vin_number,
+        license_plate,
+        vehicle_registration_expiration,
+        vehicle_registration_issued_date,
+        registered_owner_names_encrypted,
+        ca_title_number_encrypted,
+        vehicle_registration_photo_url,
+        license_plate_photo_url,
+        car_image_front,
+        car_image_back,
+        car_image_left,
+        car_image_right,
+        vehicle_photos,
+        inspection_status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+      RETURNING car_id`,
+      [
+        driver_id,
+        driverData.car_make,
+        driverData.car_model,
+        driverData.car_year,
+        driverData.car_color,
+        driverData.body_type,
+        driverData.vin_number,
+        driverData.license_plate,
+        driverData.vehicle_registration_expiration,
+        driverData.vehicle_registration_issued_date,
+        driverData.registered_owner_names_encrypted,
+        driverData.ca_title_number_encrypted,
+        driverData.vehicle_registration_photo_url,
+        driverData.license_plate_photo_url,
+        driverData.car_image_front,
+        driverData.car_image_back,
+        driverData.car_image_left,
+        driverData.car_image_right,
+        driverData.vehicle_photos || '[]',
+        driverData.inspection_status || 'pending'
+      ]
+    );
+    const car_id = carRes.rows[0].car_id;
+    console.log('[SIGNUP] Created car details with ID:', car_id);
+    
+    // Step 4: Insert into insurance_details table
+    await client.query(
+      `INSERT INTO insurance_details (
+        driver_id,
+        car_id,
+        insurance_provider,
+        insurance_policy_number,
+        policy_start_date,
+        policy_end_date,
+        insured_names_encrypted,
+        named_drivers_encrypted,
+        insurance_state,
+        insurer_contact_info,
+        insurance_card_photo_url,
+        insurance_verification_issues,
+        insurance_explanation,
+        additional_document_url
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+      [
+        driver_id,
+        car_id,
+        driverData.insurance_provider,
+        driverData.insurance_policy_number,
+        driverData.policy_start_date,
+        driverData.policy_end_date,
+        driverData.insured_names_encrypted,
+        driverData.named_drivers_encrypted,
+        driverData.insurance_state,
+        driverData.insurer_contact_info,
+        driverData.insurance_card_photo_url,
+        JSON.stringify(driverData.insurance_verification_issues || []),
+        driverData.insurance_explanation,
+        driverData.additional_document_url
+      ]
+    );
+    console.log('[SIGNUP] Created insurance details');
+    
+    // Step 5: Insert into background_checks table
+    await client.query(
+      `INSERT INTO background_checks (
+        driver_id,
+        ssn_encrypted,
+        work_authorization,
+        criminal_consent,
+        driving_consent,
+        face_match_verified,
+        face_match_confidence,
+        face_match_issues,
+        requires_manual_review,
+        verification_issues,
+        check_status,
+        check_date
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [
+        driver_id,
+        driverData.ssn || null,
+        driverData.work_authorization,
+        driverData.criminal_consent,
+        driverData.driving_consent,
+        driverData.face_match_verified,
+        driverData.face_match_confidence,
+        JSON.stringify(driverData.face_match_issues || []),
+        driverData.requires_manual_review,
+        JSON.stringify(driverData.verification_issues || []),
+        'pending',
+        new Date()
+      ]
+    );
+    console.log('[SIGNUP] Created background check record');
+    
+    await client.query('COMMIT');
+    
+    console.log('[SIGNUP] SUCCESS - Driver registered with ID:', driver_id);
     console.log('========================================\n');
     
-    res.json({
+    res.status(201).json({
       success: true,
       message: 'Driver registered successfully',
-      data: driverData
+      driver_id: driver_id,
+      user_id: user_id
     });
+    
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error('[SIGNUP] ERROR:', error);
+    console.error('[SIGNUP] Error detail:', error.detail);
     console.error('[SIGNUP] Error stack:', error.stack);
     console.log('========================================\n');
     
     res.status(500).json({
       success: false,
-      error: error.message
+      error: 'Failed to register driver',
+      message: error.message,
+      detail: error.detail
     });
+  } finally {
+    client.release();
   }
 });
+
+
 
 // Debug middleware to log all requests to these routes
 router.use((req, res, next) => {
