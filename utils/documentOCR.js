@@ -343,6 +343,45 @@ async function extractInsuranceCard(imageUrl) {
       return null;
     };
     
+    // Extract insurance company from full text (often in header/logo area)
+    const extractInsuranceCompany = () => {
+      // First try key-value pairs
+      const fromKV = extractField(['company', 'insurer', 'insurance company', 'underwritten by']);
+      if (fromKV) return fromKV;
+      
+      // Common insurance company patterns in full text
+      const insuranceCompanies = [
+        'State Farm', 'GEICO', 'Progressive', 'Allstate', 'USAA', 
+        'Liberty Mutual', 'Farmers', 'Nationwide', 'American Family',
+        'Travelers', 'Mercury', 'MetLife', 'Hartford', 'Amica',
+        'Erie Insurance', 'Auto-Owners', 'Country Financial',
+        'The General', 'Esurance', 'Kemper', 'National General',
+        'AAA', 'CSAA', 'Infinity', 'Safeco', 'Wawanesa',
+        'Auto Club', 'Grange', 'Hanover', 'Horace Mann',
+        'Plymouth Rock', 'Sentry', 'Westfield', 'QBE',
+        'Bear River', 'Branch', 'Bristol West', 'California Casualty',
+        'Clearcover', 'Chubb', 'Cincinnati', 'CNA', 'Colonial Penn'
+      ];
+      
+      // Search for company names in full text
+      const upperText = fullText.toUpperCase();
+      for (const company of insuranceCompanies) {
+        if (upperText.includes(company.toUpperCase())) {
+          debugLog('Insurance company found in text', company);
+          return company;
+        }
+      }
+      
+      // Look for "Insurance" in the text and try to extract company name
+      const insuranceMatch = fullText.match(/([A-Za-z\s&]+)\s+Insurance/i);
+      if (insuranceMatch) {
+        debugLog('Insurance company found via pattern', insuranceMatch[1]);
+        return insuranceMatch[1].trim() + ' Insurance';
+      }
+      
+      return null;
+    };
+    
     // Extract dates
     const extractDate = (keys) => {
       const value = extractField(keys);
@@ -364,35 +403,69 @@ async function extractInsuranceCard(imageUrl) {
     };
     
     // Find VIN in insurance card (sometimes included)
-    const vin = findVIN(fullText, keyValuePairs);
-    
-    // Extract named drivers (look for common patterns)
-    const namedDrivers = [];
-    const driverPatterns = [
-      /named\s+insured[:\s]+([^\n]+)/gi,
-      /additional\s+driver[:\s]+([^\n]+)/gi,
-      /driver[:\s]+([^\n]+)/gi
-    ];
-    
-    driverPatterns.forEach(pattern => {
-      const matches = fullText.match(pattern);
-      if (matches) {
-        matches.slice(1).forEach(driver => {
-          if (driver && !namedDrivers.includes(driver)) {
-            namedDrivers.push(driver.trim());
-          }
-        });
+    const findInsuranceVIN = () => {
+      // Check for VIN in key-value pairs
+      const vin = findVIN(fullText, keyValuePairs);
+      if (vin) return vin;
+      
+      // Sometimes VIN is prefixed with "No" or other text
+      const vinPattern = /[A-HJ-NPR-Z0-9]{17}/g;
+      const text = fullText.replace(/[^A-HJ-NPR-Z0-9]/g, '');
+      const matches = text.match(vinPattern);
+      if (matches && matches.length > 0) {
+        debugLog('VIN found after cleanup', matches[0]);
+        return matches[0];
       }
-    });
+      
+      return null;
+    };
+    
+    // Extract named drivers (including additional drivers)
+    const extractNamedDrivers = () => {
+      const drivers = [];
+      
+      // Get primary insured
+      const primaryInsured = extractField(['named insured', 'insured', 'policyholder', 'insured name']);
+      if (primaryInsured) {
+        drivers.push(primaryInsured);
+      }
+      
+      // Get additional drivers
+      const additionalDrivers = extractField(['additional drivers', 'additional insured', 'other drivers']);
+      if (additionalDrivers) {
+        // Split by common delimiters
+        const additionalList = additionalDrivers.split(/[,;&]|and/i).map(d => d.trim()).filter(d => d);
+        drivers.push(...additionalList);
+      }
+      
+      // Look for driver patterns in full text
+      const driverPatterns = [
+        /named\s+insured[:\s]+([^\n]+)/gi,
+        /additional\s+driver[:\s]+([^\n]+)/gi,
+        /driver[:\s]+([^\n]+)/gi
+      ];
+      
+      driverPatterns.forEach(pattern => {
+        let match;
+        while ((match = pattern.exec(fullText)) !== null) {
+          const driver = match[1].trim();
+          if (driver && !drivers.includes(driver)) {
+            drivers.push(driver);
+          }
+        }
+      });
+      
+      return [...new Set(drivers)]; // Remove duplicates
+    };
     
     const data = {
-      insurance_company: extractField(['company', 'insurer', 'insurance company', 'underwritten by']),
+      insurance_company: extractInsuranceCompany(),
       policy_number: extractField(['policy', 'policy number', 'policy no', 'pol#']),
       effective_date: extractDate(['effective', 'eff date', 'from', 'starts']),
       expiration_date: extractDate(['expires', 'expiration', 'exp date', 'to', 'ends']),
-      insured_name: extractField(['insured', 'policyholder', 'named insured', 'insured name']),
-      named_drivers: namedDrivers,
-      vehicle_vin: vin,
+      insured_name: extractField(['named insured', 'insured', 'policyholder', 'insured name']),
+      named_drivers: extractNamedDrivers(),
+      vehicle_vin: findInsuranceVIN(),
       vehicle_year: extractField(['year', 'yr']),
       vehicle_make: extractField(['make']),
       vehicle_model: extractField(['model'])
@@ -425,8 +498,8 @@ async function extractInsuranceCard(imageUrl) {
         appears_genuine: true
       },
       driver_verification: {
-        has_multiple_drivers: namedDrivers.length > 1,
-        drivers_listed: namedDrivers
+        has_multiple_drivers: data.named_drivers.length > 1,
+        drivers_listed: data.named_drivers
       }
     };
     
