@@ -5,6 +5,8 @@ const multer = require('multer');
 const ocrController = require('../controllers/ocrController');
 const pool = require('../db'); // Add this line after other requires
 const { encrypt, hash } = require('../utils/encryption');
+const { validateDriverSignup, sanitizeDate } = require('../utils/validation');
+const validator = require('validator'); // npm install validator
 
 // Configure multer properly
 const upload = multer({
@@ -159,45 +161,97 @@ router.post('/signup-driver', async (req, res) => {
   console.log('[SIGNUP] Request body keys:', Object.keys(req.body));
   
   try {
-    
-    
     const driverData = req.body;
 
-    // Validate required fields
-const requiredFields = [
-  'first_name', 'last_name', 'email', 'phone_number',
-  'driver_license_number', 'driver_license_expiration',
-  'clerk_user_id', 'car_make', 'car_model', 'car_year',
-  'insurance_provider', 'insurance_policy_number'
-];
+    // Comprehensive validation
+    const validation = validateDriverSignup(driverData);
+    
+    if (!validation.isValid) {
+      console.log('[SIGNUP] Validation failed:', validation.errors);
+      return res.status(400).json({
+        success: false,
+        error: 'Validation failed',
+        errors: validation.errors,
+        warnings: validation.warnings
+      });
+    }
+    
+    // Log warnings but don't block
+    if (validation.warnings.length > 0) {
+      console.log('[SIGNUP] Warnings:', validation.warnings);
+    }
 
-const missingFields = requiredFields.filter(field => !driverData[field]);
-if (missingFields.length > 0) {
-  console.log('[SIGNUP] Missing required fields:', missingFields);
-  return res.status(400).json({
-    success: false,
-    error: 'Missing required fields',
-    missingFields: missingFields
-  });
-}
+    // Additional data quality checks
+    const dataQualityIssues = [];
+    
+    // Check if OCR might have failed
+    if (driverData.first_name === driverData.last_name) {
+      dataQualityIssues.push('First and last name are identical');
+    }
+    
+    // Check for test data
+    const testDataPatterns = ['test', 'demo', 'sample', 'xxx', '123456'];
+    const fieldsToCheck = ['first_name', 'last_name', 'email', 'driver_license_number'];
+    
+    fieldsToCheck.forEach(field => {
+      if (driverData[field] && testDataPatterns.some(pattern => 
+        driverData[field].toLowerCase().includes(pattern))) {
+        dataQualityIssues.push(`${field} appears to contain test data`);
+      }
+    });
+    
+    // If there are data quality issues, flag for manual review
+    if (dataQualityIssues.length > 0) {
+      driverData.requires_manual_review = true;
+      driverData.verification_issues = [
+        ...(driverData.verification_issues || []),
+        ...dataQualityIssues
+      ];
+      console.log('[SIGNUP] Data quality issues found:', dataQualityIssues);
+    }
+
+    // Check for duplicate registration
+    const existingDriver = await client.query(
+      `SELECT d.driver_id, d.status, u.email 
+       FROM drivers d 
+       JOIN users u ON d.user_id = u.user_id 
+       WHERE d.driver_license_number = $1 OR u.email = $2`,
+      [driverData.driver_license_number, driverData.email]
+    );
+    
+    if (existingDriver.rows.length > 0) {
+      const existing = existingDriver.rows[0];
+      console.log('[SIGNUP] Duplicate registration attempt:', existing);
+      
+      return res.status(400).json({
+        success: false,
+        error: 'Driver already registered',
+        message: `A driver with this ${existing.email === driverData.email ? 'email' : 'license number'} already exists`,
+        status: existing.status
+      });
+    }
 
     // START TRANSACTION AFTER VALIDATION
     await client.query('BEGIN');
 
-    // Encrypt sensitive fields
+    // Encrypt sensitive fields with validation
     const encryptedData = {
       ...driverData,
-      // Encrypt these fields
-      document_discriminator_encrypted: encrypt(driverData.document_discriminator_encrypted),
-      residence_address_encrypted: encrypt(driverData.residence_address_encrypted),
-      registered_owner_names_encrypted: encrypt(driverData.registered_owner_names_encrypted),
-      ca_title_number_encrypted: encrypt(driverData.ca_title_number_encrypted),
-      insured_names_encrypted: encrypt(driverData.insured_names_encrypted),
-      named_drivers_encrypted: encrypt(driverData.named_drivers_encrypted),
-      ssn_encrypted: encrypt(driverData.ssn),
-      
-      // Hash SSN for searching (if needed)
-      ssn_hash: hash(driverData.ssn),
+      // Only encrypt if values exist
+      document_discriminator_encrypted: driverData.document_discriminator_encrypted ? 
+        encrypt(driverData.document_discriminator_encrypted) : null,
+      residence_address_encrypted: driverData.residence_address_encrypted ? 
+        encrypt(driverData.residence_address_encrypted) : null,
+      registered_owner_names_encrypted: driverData.registered_owner_names_encrypted ? 
+        encrypt(driverData.registered_owner_names_encrypted) : null,
+      ca_title_number_encrypted: driverData.ca_title_number_encrypted ? 
+        encrypt(driverData.ca_title_number_encrypted) : null,
+      insured_names_encrypted: driverData.insured_names_encrypted ? 
+        encrypt(driverData.insured_names_encrypted) : null,
+      named_drivers_encrypted: driverData.named_drivers_encrypted ? 
+        encrypt(driverData.named_drivers_encrypted) : null,
+      ssn_encrypted: driverData.ssn ? encrypt(driverData.ssn) : null,
+      ssn_hash: driverData.ssn ? hash(driverData.ssn) : null,
     };
     
     // Log important fields with UPDATED field names
@@ -232,7 +286,7 @@ if (missingFields.length > 0) {
         email,
         driver_license_number,
         driver_license_expiration,
-        birth_date,
+    birth_date,
         driver_license_state_issued,
         document_discriminator_encrypted,
         residence_address_encrypted,
@@ -255,16 +309,16 @@ if (missingFields.length > 0) {
         driverData.phone_number,
         driverData.email,
         driverData.driver_license_number,
-        driverData.driver_license_expiration,
-        driverData.birth_date,
+        sanitizeDate(vehicle_registration_expiration),
+        sanitizeDate(vehicle_registration_issued_date),
         driverData.driver_license_state_issued,
-        driverData.document_discriminator_encrypted,
-        driverData.residence_address_encrypted,
+        encryptedData.document_discriminator_encrypted,
+    encryptedData.residence_address_encrypted,
         driverData.driver_license_photo_front_url,
         driverData.driver_license_photo_back_url,
         driverData.profile_photo_url,
         driverData.reference_face_photo_url,
-        driverData.reference_face_uploaded_at,
+        sanitizeDate(driverData.reference_face_uploaded_at),
         driverData.city,
         driverData.zip_code,
         driverData.requires_manual_review ? 'pending_review' : 'pending',
@@ -310,8 +364,8 @@ if (missingFields.length > 0) {
         driverData.vin_number,
         driverData.license_plate,
         // Fix: Convert empty strings to null for date fields
-        driverData.vehicle_registration_expiration || null,
-        driverData.vehicle_registration_issued_date || null,
+        sanitizeDate(driverData.vehicle_registration_expiration),
+    sanitizeDate(driverData.vehicle_registration_issued_date),
         encryptedData.registered_owner_names_encrypted,
         encryptedData.ca_title_number_encrypted,
         driverData.vehicle_registration_photo_url,
@@ -350,10 +404,10 @@ if (missingFields.length > 0) {
         car_id,
         driverData.insurance_provider,
         driverData.insurance_policy_number,
-        driverData.policy_start_date,
-        driverData.policy_end_date,
-        driverData.insured_names_encrypted,
-        driverData.named_drivers_encrypted,
+        sanitizeDate(driverData.policy_start_date),
+        sanitizeDate(driverData.policy_end_date),
+        encryptedData.insured_names_encrypted,
+    encryptedData.named_drivers_encrypted,
         driverData.insurance_state,
         driverData.insurer_contact_info,
         driverData.insurance_card_photo_url,
@@ -382,7 +436,7 @@ if (missingFields.length > 0) {
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [
         driver_id,
-        driverData.ssn || null,
+    encryptedData.ssn_encrypted,
         driverData.work_authorization,
         driverData.criminal_consent,
         driverData.driving_consent,
@@ -406,7 +460,9 @@ if (missingFields.length > 0) {
       success: true,
       message: 'Driver registered successfully',
       driver_id: driver_id,
-      user_id: user_id
+      user_id: user_id,
+      warnings: validation.warnings,
+      requires_review: driverData.requires_manual_review
     });
     
   } catch (error) {
