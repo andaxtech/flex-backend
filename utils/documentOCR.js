@@ -131,6 +131,7 @@ function findVIN(text, keyValuePairs) {
   return null;
 }
 
+
 // Extract vehicle registration using AWS Textract
 async function extractVehicleRegistration(imageUrl) {
   try {
@@ -154,8 +155,25 @@ async function extractVehicleRegistration(imageUrl) {
     const { keyValuePairs, fullText } = extractKeyValuePairs(textractResult);
     debugLog('Extracted key-value pairs', keyValuePairs);
     
-    // Find VIN
+    // Find VIN first - this is most reliable
     const vin = findVIN(fullText, keyValuePairs);
+    
+    // Extract license plate with better pattern matching
+    const extractLicensePlate = () => {
+      // First try key-value pairs
+      const plateFromKV = extractField(['license number', 'license plate', 'plate number', 'plate no', 'lic no']);
+      if (plateFromKV) return plateFromKV;
+      
+      // Then try pattern matching for California plates (like 6SJL896)
+      const platePattern = /\b[0-9][A-Z]{3}[0-9]{3}\b/g;
+      const matches = fullText.match(platePattern);
+      if (matches && matches.length > 0) {
+        debugLog('License plate found via pattern', matches[0]);
+        return matches[0];
+      }
+      
+      return null;
+    };
     
     // Extract other fields
     const extractField = (keys) => {
@@ -169,23 +187,97 @@ async function extractVehicleRegistration(imageUrl) {
       return null;
     };
     
+    // Extract year more carefully
+    const extractVehicleYear = () => {
+      // Don't trust generic "year" field - it might be issue year
+      // Look for more specific keys
+      const yearValue = extractField(['model year', 'vehicle year', 'yr of vehicle', 'veh yr']);
+      if (yearValue) {
+        debugLog('Year found via specific vehicle year key', yearValue);
+        return yearValue;
+      }
+      
+      // If we have a VIN, we should decode it instead of trusting OCR
+      // The VIN decoder in the frontend will override this anyway
+      if (vin) {
+        debugLog('Have VIN, will let frontend decode for accurate year');
+        return null; // Let VIN decoder handle it
+      }
+      
+      // Last resort - look for generic year but validate it's reasonable
+      const genericYear = extractField(['year']);
+      if (genericYear) {
+        const yearNum = parseInt(genericYear);
+        const currentYear = new Date().getFullYear();
+        // Only accept years that make sense for vehicles (1990-current+1)
+        if (yearNum >= 1990 && yearNum <= currentYear + 1) {
+          debugLog('Using generic year field', genericYear);
+          return genericYear;
+        } else {
+          debugLog('Ignoring invalid year', genericYear);
+        }
+      }
+      
+      return null;
+    };
+    
+    // Build the data object
     const data = {
       vin: vin,
-      license_plate: extractField(['plate', 'license plate', 'plate number', 'plate no']),
-      make: extractField(['make', 'vehicle make', 'manufacturer']),
-      model: extractField(['model', 'vehicle model']),
-      year: extractField(['year', 'model year', 'vehicle year']),
-      color: extractField(['color', 'vehicle color']),
-      registration_expiration: extractField(['expires', 'expiration', 'exp date', 'valid until']),
-      registered_owner: extractField(['owner', 'registered to', 'name', 'registrant'])
+      license_plate: extractLicensePlate(),
+      make: extractField(['make', 'vehicle make', 'manufacturer', 'mk']),
+      model: extractField(['model', 'vehicle model', 'mdl']),
+      year: extractVehicleYear(), // Use our improved year extraction
+      color: extractField(['color', 'vehicle color', 'col']),
+      registration_expiration: extractField(['expires', 'expiration', 'exp date', 'valid until', 'valid through']),
+      registered_owner: extractField(['registered owner', 'owner', 'registered to', 'name', 'registrant'])
     };
+    
+    // Clean up the make field to handle abbreviations
+    if (data.make) {
+      const makeAbbreviations = {
+        'VOLK': 'Volkswagen',
+        'CHEV': 'Chevrolet',
+        'MERC': 'Mercedes-Benz',
+        'TOYT': 'Toyota',
+        'HOND': 'Honda',
+        'NISS': 'Nissan',
+        'MAZD': 'Mazda',
+        'HYUN': 'Hyundai',
+        'MITS': 'Mitsubishi',
+        'DODG': 'Dodge',
+        'CHRY': 'Chrysler',
+        'BUIC': 'Buick',
+        'CADI': 'Cadillac',
+        'LINC': 'Lincoln',
+        'ACUR': 'Acura',
+        'INFI': 'Infiniti',
+        'LEXS': 'Lexus',
+        'PORS': 'Porsche',
+        'VOLV': 'Volvo',
+        'JAGU': 'Jaguar',
+        'SATU': 'Saturn',
+        'PONT': 'Pontiac',
+        'OLDS': 'Oldsmobile',
+        'HUMM': 'Hummer',
+        'SUZU': 'Suzuki',
+        'ISUZ': 'Isuzu'
+      };
+      
+      const upperMake = data.make.toUpperCase();
+      if (makeAbbreviations[upperMake]) {
+        data.make = makeAbbreviations[upperMake];
+        debugLog('Converted make abbreviation', { from: upperMake, to: data.make });
+      }
+    }
     
     debugLog('Extracted registration data', data);
     
     // Check if this looks like a registration document
     const isRegistration = (vin || data.license_plate || 
                           (data.make && data.model) ||
-                          fullText.toLowerCase().includes('registration'));
+                          fullText.toLowerCase().includes('registration') ||
+                          fullText.toLowerCase().includes('vehicle registration'));
     
     return {
       document_type: isRegistration ? 'registration' : 'wrong_document',
@@ -194,7 +286,8 @@ async function extractVehicleRegistration(imageUrl) {
         appears_genuine: true,
         confidence: vin ? 90 : 70
       },
-      vin_valid: vin !== null
+      vin_valid: vin !== null,
+      has_vin_for_decoding: vin !== null // Flag to indicate VIN decoder should be used
     };
     
   } catch (err) {
