@@ -199,10 +199,6 @@ if (missingFields.length > 0) {
       // Hash SSN for searching (if needed)
       ssn_hash: hash(driverData.ssn),
     };
-
-
-
-
     
     // Log important fields with UPDATED field names
     console.log('[SIGNUP] Driver name:', driverData.first_name, driverData.last_name);
