@@ -406,12 +406,13 @@ exports.getAvailableBlocks = async (req, res) => {
   }
 
   try {
-    // First, check driver eligibility (UPDATED to use car_details table)
+// First, check driver eligibility (UPDATED to use car_details table)
+
     const eligibilityQuery = `
       WITH valid_insurance AS (
   SELECT 
     driver_id,
-    MAX(policy_end_date) as latest_insurance_end  // ← CORRECT COLUMN NAME
+    MAX(policy_end_date) as latest_insurance_end
   FROM insurance_details
   WHERE driver_id = $1
   GROUP BY driver_id
