@@ -165,6 +165,12 @@ router.post('/signup-driver', async (req, res) => {
 
     // Comprehensive validation
     const validation = validateDriverSignup(driverData);
+
+    // Additional insurance state validation
+if (!driverData.insurance_state || !driverData.insurance_state.match(/^[A-Z]{2}$/)) {
+  validation.warnings = validation.warnings || [];
+  validation.warnings.push('Insurance state missing or invalid - will use driver license state');
+}
     
     if (!validation.isValid) {
       console.log('[SIGNUP] Validation failed:', validation.errors);
@@ -329,6 +335,7 @@ router.post('/signup-driver', async (req, res) => {
     const driver_id = driverRes.rows[0].driver_id;
     console.log('[SIGNUP] Created driver with ID:', driver_id);
     
+    
     // Step 3: Insert into car_details table
     const carRes = await client.query(
       `INSERT INTO car_details (
@@ -406,8 +413,10 @@ router.post('/signup-driver', async (req, res) => {
         sanitizeDate(driverData.policy_start_date),
         sanitizeDate(driverData.policy_end_date),
         encryptedData.insured_names_encrypted,
-    encryptedData.named_drivers_encrypted,
-        driverData.insurance_state,
+        encryptedData.named_drivers_encrypted,
+        (driverData.insurance_state && driverData.insurance_state.match(/^[A-Z]{2}$/))
+        ? driverData.insurance_state
+        : driverData.driver_license_state_issued || 'CA', 
         driverData.insurer_contact_info,
         driverData.insurance_card_photo_url,
         JSON.stringify(driverData.insurance_verification_issues || []),
