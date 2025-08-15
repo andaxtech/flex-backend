@@ -230,7 +230,10 @@ async function extractVehicleRegistration(imageUrl) {
       year: extractVehicleYear(), // Use our improved year extraction
       color: extractField(['color', 'vehicle color', 'col']),
       registration_expiration: extractField(['expires', 'expiration', 'exp date', 'valid until', 'valid through']),
-      registered_owner: extractField(['registered owner', 'owner', 'registered to', 'name', 'registrant'])
+      registration_issued_date: extractField(['issued', 'issue date', 'issued on', 'registration date', 'first registered']),
+      registered_owner: extractField(['registered owner', 'owner', 'registered to', 'name', 'registrant']),
+      ca_title_number: extractField(['title number', 'title no', 'title #', 'ca title', 'california title']),
+      body_type: extractField(['body type', 'body style', 'vehicle type', 'type'])
     };
     
     // Clean up the make field to handle abbreviations
@@ -279,16 +282,17 @@ async function extractVehicleRegistration(imageUrl) {
                           fullText.toLowerCase().includes('registration') ||
                           fullText.toLowerCase().includes('vehicle registration'));
     
-    return {
-      document_type: isRegistration ? 'registration' : 'wrong_document',
-      data: data,
-      authenticity: {
-        appears_genuine: true,
-        confidence: vin ? 90 : 70
-      },
-      vin_valid: vin !== null,
-      has_vin_for_decoding: vin !== null // Flag to indicate VIN decoder should be used
-    };
+                          return {
+                            document_type: isRegistration ? 'registration' : 'wrong_document',
+                            data: data,
+                            authenticity: {
+                              appears_genuine: true,
+                              confidence: vin ? 90 : 70
+                            },
+                            vin_valid: vin !== null,
+                            has_vin_for_decoding: vin !== null, // Flag to indicate VIN decoder should be used
+                            missing_required_fields: !data.registration_expiration ? ['registration_expiration'] : []
+                          };
     
   } catch (err) {
     console.error('Textract registration extraction failed:', err);
@@ -946,8 +950,8 @@ function validateExtractedData(data, documentType) {
       dateFields: ['date_of_birth', 'expiration_date', 'issue_date'],
     },
     registration: {
-      required: [],
-      dateFields: ['registration_expiration', 'issue_date'],
+      required: ['registration_expiration'], // Make expiration required
+      dateFields: ['registration_expiration', 'registration_issued_date'],
     },
     insurance: {
       required: ['insurance_company'],
