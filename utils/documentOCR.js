@@ -420,6 +420,56 @@ async function extractInsuranceCard(imageUrl) {
       return null;
     };
     
+    // Extract insurance state
+    const extractInsuranceState = () => {
+      // First check key-value pairs for state
+      const stateFromKV = extractField(['state', 'policy state', 'issued in', 'state of issue']);
+      if (stateFromKV && stateFromKV.match(/^[A-Z]{2}$/)) {
+        return stateFromKV;
+      }
+      
+      // Look for state abbreviations in the full text
+      const statePattern = /\b(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY)\b/g;
+      const matches = fullText.match(statePattern);
+      
+      if (matches && matches.length > 0) {
+        debugLog('Insurance state found via pattern', matches[0]);
+        return matches[0];
+      }
+      
+      // Try to find state near policy information
+      const policyStatePattern = /(?:Policy|Coverage|State)[:\s]*([A-Z]{2})\b/i;
+      const policyStateMatch = fullText.match(policyStatePattern);
+      if (policyStateMatch) {
+        return policyStateMatch[1].toUpperCase();
+      }
+      
+      return null;
+    };
+
+    // Extract insurer contact info
+    const extractInsurerContactInfo = () => {
+      // Look for phone numbers
+      const phonePattern = /(?:Phone|Call|Contact|Claims)[:\s]*(?:1[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})/gi;
+      const phoneMatches = fullText.match(phonePattern);
+      
+      if (phoneMatches && phoneMatches.length > 0) {
+        // Extract just the number portion
+        const cleanPhone = phoneMatches[0].replace(/[^0-9]/g, '');
+        return cleanPhone.length >= 10 ? cleanPhone : null;
+      }
+      
+      // Try to find any 10-digit phone number
+      const genericPhonePattern = /(?:1[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})/g;
+      const allPhones = fullText.match(genericPhonePattern);
+      
+      if (allPhones && allPhones.length > 0) {
+        return allPhones[0].replace(/[^0-9]/g, '');
+      }
+      
+      return null;
+    };
+
     // Extract named drivers (including additional drivers)
     const extractNamedDrivers = () => {
       const drivers = [];
@@ -455,7 +505,8 @@ async function extractInsuranceCard(imageUrl) {
         }
       });
       
-      return [...new Set(drivers)]; // Remove duplicates
+      const uniqueDrivers = [...new Set(drivers)]; // Remove duplicates
+      return uniqueDrivers.join(', '); // Return as comma-separated string
     };
     
     const data = {
@@ -465,6 +516,8 @@ async function extractInsuranceCard(imageUrl) {
       expiration_date: extractDate(['expires', 'expiration', 'exp date', 'to', 'ends']),
       insured_name: extractField(['named insured', 'insured', 'policyholder', 'insured name']),
       named_drivers: extractNamedDrivers(),
+      insurance_state: extractInsuranceState(),
+      insurer_contact_info: extractInsurerContactInfo(),
       vehicle_vin: findInsuranceVIN(),
       vehicle_year: extractField(['year', 'yr']),
       vehicle_make: extractField(['make']),
@@ -498,7 +551,7 @@ async function extractInsuranceCard(imageUrl) {
         appears_genuine: true
       },
       driver_verification: {
-        has_multiple_drivers: data.named_drivers.length > 1,
+        has_multiple_drivers: data.named_drivers.split(',').length > 1,
         drivers_listed: data.named_drivers
       }
     };

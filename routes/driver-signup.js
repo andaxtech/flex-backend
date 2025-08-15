@@ -305,7 +305,9 @@ if (!driverData.insurance_state || !driverData.insurance_state.match(/^[A-Z]{2}$
         zip_code,
         status,
         email_verified,
-        phone_verified
+        phone_verified,
+        email_verified_at,
+        phone_verified_at
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
       RETURNING driver_id`,
       [
@@ -329,7 +331,9 @@ if (!driverData.insurance_state || !driverData.insurance_state.match(/^[A-Z]{2}$
         driverData.zip_code,
         driverData.requires_manual_review ? 'pending_review' : 'pending',
         true, // email_verified (from Clerk)
-        true  // phone_verified (from Clerk)
+        true,  // phone_verified (from Clerk)
+        new Date(),  // email_verified_at - current timestamp since coming from Clerk
+        new Date()   // phone_verified_at - current timestamp since coming from Clerk
       ]
     );
     const driver_id = driverRes.rows[0].driver_id;
