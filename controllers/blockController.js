@@ -168,6 +168,12 @@ exports.claimBlock = async (req, res) => {
     
     console.log(`Block ${block_id} (created by manager ${manager_id}) successfully claimed by driver ${driver_id}`);
     
+    // WEBSOCKET: Emit block claimed event
+    if (global.socketIO && global.socketIO.emitBlockClaimed) {
+      global.socketIO.emitBlockClaimed(block_id, driver_id);
+      console.log(`🔌 Emitted block-claimed event for block ${block_id}`);
+    }
+    
     res.status(201).json({ 
       success: true, 
       message: 'Block claimed successfully', 
@@ -175,7 +181,7 @@ exports.claimBlock = async (req, res) => {
         claim_id: claimResult.rows[0].claim_id,
         block_id: block_id,
         claim_time: claimResult.rows[0].claim_time,
-        manager_id: manager_id  // ADD: Include manager_id in response
+        manager_id: manager_id
       }
     });
 
@@ -367,6 +373,12 @@ exports.unclaimBlock = async (req, res) => {
       minutesBeforeStart: Math.round(diffMinutes),
       wasAlreadyStarted: diffMinutes <= 0
     });
+    
+    // WEBSOCKET: Emit block released event
+    if (global.socketIO && global.socketIO.emitBlockReleased) {
+      global.socketIO.emitBlockReleased(block_id);
+      console.log(`🔌 Emitted block-released event for block ${block_id}`);
+    }
     
     res.status(200).json({ 
       success: true,
