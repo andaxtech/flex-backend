@@ -268,18 +268,33 @@ if (!driverData.insurance_state || !driverData.insurance_state.match(/^[A-Z]{2}$
     console.log('[SIGNUP] Requires manual review:', driverData.requires_manual_review);
     
     // Step 1: Insert into users table (using email as username since we don't need separate usernames)
-    const userRes = await client.query(
-      'INSERT INTO users (username, email, clerk_user_id, role, status, is_verified) VALUES ($1, $2, $3, $4, $5, $6) RETURNING user_id',
-      [
-        driverData.email,  // Use email as username
-        driverData.email, 
-        driverData.clerk_user_id, 
-        'driver', 
-        'pending', 
-        true
-      ]
-    );
-    const user_id = userRes.rows[0].user_id;
+    // Step 1: Check if user already exists with this Clerk ID
+let user_id;
+const existingUser = await client.query(
+  'SELECT user_id FROM users WHERE clerk_user_id = $1',
+  [driverData.clerk_user_id]
+);
+
+if (existingUser.rows.length > 0) {
+  // User already exists, use their ID
+  user_id = existingUser.rows[0].user_id;
+  console.log('[SIGNUP] Found existing user with ID:', user_id);
+} else {
+  // Create new user
+  const userRes = await client.query(
+    'INSERT INTO users (username, email, clerk_user_id, role, status, is_verified) VALUES ($1, $2, $3, $4, $5, $6) RETURNING user_id',
+    [
+      driverData.email,  // Use email as username
+      driverData.email, 
+      driverData.clerk_user_id, 
+      'driver', 
+      'pending', 
+      true
+    ]
+  );
+  user_id = userRes.rows[0].user_id;
+  console.log('[SIGNUP] Created new user with ID:', user_id);
+}
     console.log('[SIGNUP] Created user with ID:', user_id);
     
     // Step 2: Insert into drivers table
