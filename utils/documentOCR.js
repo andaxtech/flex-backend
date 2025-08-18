@@ -475,43 +475,58 @@ async function extractInsuranceCard(imageUrl) {
     };
 
     // Extract named drivers (including additional drivers)
-    const extractNamedDrivers = () => {
-      const drivers = [];
-      
-      // Get primary insured
-      const primaryInsured = extractField(['named insured', 'insured', 'policyholder', 'insured name']);
-      if (primaryInsured) {
-        drivers.push(primaryInsured);
+    // Extract named drivers (including additional drivers)
+const extractNamedDrivers = () => {
+  const drivers = [];
+  
+  // Get primary insured
+  const primaryInsured = extractField(['named insured', 'insured', 'policyholder', 'insured name']);
+  if (primaryInsured && primaryInsured.length > 2) {
+    drivers.push(primaryInsured);
+  }
+  
+  // Get additional drivers - also check for "Additional Drivers" as a standalone section
+const additionalDrivers = extractField(['additional drivers', 'additional insured', 'other drivers', 'drivers']);
+
+// If not found in key-value pairs, look for section headers in full text
+if (!additionalDrivers) {
+  // Look for "Additional Drivers" section followed by names
+  const additionalDriverPattern = /Additional\s+Drivers[:\s]*([^\n]+(?:\n[^\n]+)*?)(?=\n\n|\n[A-Z]|$)/gi;
+  const match = fullText.match(additionalDriverPattern);
+  if (match) {
+    additionalDrivers = match[1].trim();
+  }
+}
+  if (additionalDrivers && additionalDrivers.length > 2) {
+    // Split by common delimiters
+    const additionalList = additionalDrivers.split(/[,;&]|and/i).map(d => d.trim()).filter(d => d && d.length > 2);
+    drivers.push(...additionalList);
+  }
+  
+  // Look for driver patterns in full text
+  const driverPatterns = [
+    /named\s+insured[:\s]+([^\n]+)/gi,
+    /additional\s+driver[:\s]+([^\n]+)/gi,
+    /driver[:\s]+([^\n]+)/gi
+  ];
+  
+  driverPatterns.forEach(pattern => {
+    let match;
+    while ((match = pattern.exec(fullText)) !== null) {
+      const driver = match[1].trim();
+      // Only add if it's a real name (more than 2 characters)
+      if (driver && driver.length > 2 && !drivers.includes(driver)) {
+        drivers.push(driver);
       }
-      
-      // Get additional drivers
-      const additionalDrivers = extractField(['additional drivers', 'additional insured', 'other drivers']);
-      if (additionalDrivers) {
-        // Split by common delimiters
-        const additionalList = additionalDrivers.split(/[,;&]|and/i).map(d => d.trim()).filter(d => d);
-        drivers.push(...additionalList);
-      }
-      
-      // Look for driver patterns in full text
-      const driverPatterns = [
-        /named\s+insured[:\s]+([^\n]+)/gi,
-        /additional\s+driver[:\s]+([^\n]+)/gi,
-        /driver[:\s]+([^\n]+)/gi
-      ];
-      
-      driverPatterns.forEach(pattern => {
-        let match;
-        while ((match = pattern.exec(fullText)) !== null) {
-          const driver = match[1].trim();
-          if (driver && !drivers.includes(driver)) {
-            drivers.push(driver);
-          }
-        }
-      });
-      
-      const uniqueDrivers = [...new Set(drivers)]; // Remove duplicates
-      return uniqueDrivers.join(', '); // Return as comma-separated string
-    };
+    }
+  });
+  
+  // Filter out any single characters or very short strings
+  const uniqueDrivers = [...new Set(drivers)]
+    .filter(driver => driver && driver.length > 2 && !driver.match(/^[a-z0-9,\s]+$/i));
+  
+  return uniqueDrivers; // Return as array, not string
+};
     
     const data = {
       insurance_company: extractInsuranceCompany(),
@@ -555,8 +570,8 @@ async function extractInsuranceCard(imageUrl) {
         appears_genuine: true
       },
       driver_verification: {
-        has_multiple_drivers: data.named_drivers.split(',').length > 1,
-        drivers_listed: data.named_drivers
+        has_multiple_drivers: Array.isArray(data.named_drivers) ? data.named_drivers.length > 1 : false,
+        drivers_listed: Array.isArray(data.named_drivers) ? data.named_drivers.join(', ') : data.named_drivers
       }
     };
     
