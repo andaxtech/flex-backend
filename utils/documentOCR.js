@@ -476,6 +476,7 @@ async function extractInsuranceCard(imageUrl) {
 
   
     // Extract named drivers (including additional drivers)
+// Extract named drivers (including additional drivers)
 const extractNamedDrivers = () => {
   const drivers = [];
   
@@ -485,16 +486,49 @@ const extractNamedDrivers = () => {
     drivers.push(primaryInsured);
   }
   
-  // Get additional drivers
+  // Get additional drivers - improved extraction
   let additionalDrivers = extractField(['additional drivers', 'additional insured', 'other drivers', 'drivers', 'additional named insured']);
 
-  // If not found in key-value pairs, look for section headers in full text
+  // If the extracted value looks like a vehicle (contains year or model keywords), it's wrong
+  if (additionalDrivers && /\b(19|20)\d{2}\b|VOLKS|JETTA|HONDA|TOYOTA|FORD|CHEVY|BMW|MERCEDES/i.test(additionalDrivers)) {
+    debugLog('Detected vehicle info in additional drivers field, searching full text', additionalDrivers);
+    additionalDrivers = null; // Reset and search in full text
+  }
+
+  // If not found in key-value pairs or wrong data, look for section headers in full text
   if (!additionalDrivers) {
     // Look for "Additional Drivers" section followed by names
-    const additionalDriverPattern = /Additional\s+(?:Drivers?|Insured)[:\s]*([^\n]+(?:\n[^\n]+)*?)(?=\n\n|\n[A-Z]|$)/gi;
-    const match = fullText.match(additionalDriverPattern);
-    if (match) {
-      additionalDrivers = match[1].trim();
+    // Match the pattern but exclude lines that look like vehicle info
+    const lines = fullText.split('\n');
+    let foundAdditionalDriversHeader = false;
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      
+      // Check if this is the Additional Drivers header
+      if (/Additional\s+Drivers?/i.test(line)) {
+        foundAdditionalDriversHeader = true;
+        
+        // Look at the next few lines for names
+        for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
+          const nextLine = lines[j].trim();
+          
+          // Skip empty lines
+          if (!nextLine) continue;
+          
+          // If we hit another section header, stop
+          if (/^(Vehicle|Policy|Coverage|Address|NAIC)/i.test(nextLine)) break;
+          
+          // Check if this looks like a person's name (not a vehicle)
+          if (nextLine.length > 2 && 
+              /^[A-Za-z\s\-']+$/.test(nextLine) && 
+              !/\b(19|20)\d{2}\b|VOLKS|JETTA|HONDA|TOYOTA|FORD|CHEVY|BMW|MERCEDES/i.test(nextLine)) {
+            additionalDrivers = nextLine;
+            break;
+          }
+        }
+        break;
+      }
     }
   }
   
@@ -555,6 +589,34 @@ const data = {
 };
     
     debugLog('Extracted insurance data', data);
+
+    // Validate and correct named drivers if needed
+if (data.named_drivers && data.named_drivers.length > 0) {
+  // Filter out any entries that look like vehicles
+  data.named_drivers = data.named_drivers.filter(driver => {
+    const isVehicle = /\b(19|20)\d{2}\b.*?(VOLKS|JETTA|HONDA|TOYOTA|FORD|CHEVY|BMW|MERCEDES|NISSAN|MAZDA)/i.test(driver);
+    if (isVehicle) {
+      debugLog('Filtered out vehicle from drivers list', driver);
+    }
+    return !isVehicle;
+  });
+  
+  // If we filtered out all additional drivers, try one more time with raw text
+  if (data.named_drivers.length === 1 && fullText.toLowerCase().includes('additional driver')) {
+    // Search for names that appear after "Additional Driver" in the raw text
+    const additionalDriverMatch = fullText.match(/Additional\s+Drivers?\s*:?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/i);
+    if (additionalDriverMatch) {
+      const additionalDriver = additionalDriverMatch[1].trim();
+      if (!data.named_drivers.includes(additionalDriver)) {
+        debugLog('Found additional driver in raw text', additionalDriver);
+        data.named_drivers.push(additionalDriver);
+      }
+    }
+  }
+  
+  // Update the string version
+  data.named_drivers_string = data.named_drivers.join(', ');
+}
     
     // Check if dates are valid
     const isExpired = () => {
