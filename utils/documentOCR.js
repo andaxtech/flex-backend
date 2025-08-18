@@ -474,74 +474,85 @@ async function extractInsuranceCard(imageUrl) {
       return null;
     };
 
-    // Extract named drivers (including additional drivers)
+  
     // Extract named drivers (including additional drivers)
 const extractNamedDrivers = () => {
   const drivers = [];
   
   // Get primary insured
-  const primaryInsured = extractField(['named insured', 'insured', 'policyholder', 'insured name']);
+  const primaryInsured = extractField(['named insured', 'insured', 'policyholder', 'insured name', 'policy holder']);
   if (primaryInsured && primaryInsured.length > 2) {
     drivers.push(primaryInsured);
   }
   
-  // Get additional drivers - also check for "Additional Drivers" as a standalone section
-const additionalDrivers = extractField(['additional drivers', 'additional insured', 'other drivers', 'drivers']);
+  // Get additional drivers
+  let additionalDrivers = extractField(['additional drivers', 'additional insured', 'other drivers', 'drivers', 'additional named insured']);
 
-// If not found in key-value pairs, look for section headers in full text
-if (!additionalDrivers) {
-  // Look for "Additional Drivers" section followed by names
-  const additionalDriverPattern = /Additional\s+Drivers[:\s]*([^\n]+(?:\n[^\n]+)*?)(?=\n\n|\n[A-Z]|$)/gi;
-  const match = fullText.match(additionalDriverPattern);
-  if (match) {
-    additionalDrivers = match[1].trim();
+  // If not found in key-value pairs, look for section headers in full text
+  if (!additionalDrivers) {
+    // Look for "Additional Drivers" section followed by names
+    const additionalDriverPattern = /Additional\s+(?:Drivers?|Insured)[:\s]*([^\n]+(?:\n[^\n]+)*?)(?=\n\n|\n[A-Z]|$)/gi;
+    const match = fullText.match(additionalDriverPattern);
+    if (match) {
+      additionalDrivers = match[1].trim();
+    }
   }
-}
+  
   if (additionalDrivers && additionalDrivers.length > 2) {
-    // Split by common delimiters
-    const additionalList = additionalDrivers.split(/[,;&]|and/i).map(d => d.trim()).filter(d => d && d.length > 2);
+    // Split by common delimiters - improved parsing
+    const additionalList = additionalDrivers
+      .split(/[,;&]|\sand\s/i)
+      .map(d => d.trim())
+      .filter(d => d && d.length > 2 && !d.match(/^\d+$/)); // Filter out numbers
     drivers.push(...additionalList);
   }
   
-  // Look for driver patterns in full text
+  // Look for driver patterns in full text with better regex
   const driverPatterns = [
-    /named\s+insured[:\s]+([^\n]+)/gi,
-    /additional\s+driver[:\s]+([^\n]+)/gi,
-    /driver[:\s]+([^\n]+)/gi
+    /named\s+insured[:\s]+([A-Za-z\s\-']+)/gi,
+    /additional\s+(?:driver|insured)[:\s]+([A-Za-z\s\-']+)/gi,
+    /driver\s*\d*[:\s]+([A-Za-z\s\-']+)/gi,
+    /insured[:\s]+([A-Za-z\s\-']+)/gi
   ];
   
   driverPatterns.forEach(pattern => {
     let match;
     while ((match = pattern.exec(fullText)) !== null) {
       const driver = match[1].trim();
-      // Only add if it's a real name (more than 2 characters)
-      if (driver && driver.length > 2 && !drivers.includes(driver)) {
+      // Better validation for real names
+      if (driver && 
+          driver.length > 2 && 
+          !drivers.some(d => d.toLowerCase() === driver.toLowerCase()) &&
+          /^[A-Za-z\s\-']+$/.test(driver) && // Only letters, spaces, hyphens, apostrophes
+          !/^(and|or|the|with|for|from|to|at|in|on|by)$/i.test(driver)) { // Not common words
         drivers.push(driver);
       }
     }
   });
   
-  // Filter out any single characters or very short strings
-  const uniqueDrivers = [...new Set(drivers)]
-    .filter(driver => driver && driver.length > 2 && !driver.match(/^[a-z0-9,\s]+$/i));
+  // Clean and deduplicate
+  const uniqueDrivers = [...new Set(drivers.map(d => d.trim()))]
+    .filter(driver => driver && driver.length > 2 && /[A-Za-z]/.test(driver));
   
-  return uniqueDrivers; // Return as array, not string
+  return uniqueDrivers; // Return as array
 };
     
-    const data = {
-      insurance_company: extractInsuranceCompany(),
-      policy_number: extractField(['policy', 'policy number', 'policy no', 'pol#']),
-      effective_date: extractDate(['effective', 'eff date', 'from', 'starts']),
-      expiration_date: extractDate(['expires', 'expiration', 'exp date', 'to', 'ends']),
-      insured_name: extractField(['named insured', 'insured', 'policyholder', 'insured name']),
-      named_drivers: extractNamedDrivers(),
-      insurance_state: extractInsuranceState(),
-      insurer_contact_info: extractInsurerContactInfo(),
-      vehicle_vin: findInsuranceVIN(),
-      vehicle_year: extractField(['year', 'yr']),
-      vehicle_make: extractField(['make']),
-      vehicle_model: extractField(['model'])
-    };
+const namedDriversArray = extractNamedDrivers();
+const data = {
+  insurance_company: extractInsuranceCompany(),
+  policy_number: extractField(['policy', 'policy number', 'policy no', 'pol#']),
+  effective_date: extractDate(['effective', 'eff date', 'from', 'starts']),
+  expiration_date: extractDate(['expires', 'expiration', 'exp date', 'to', 'ends']),
+  insured_name: extractField(['named insured', 'insured', 'policyholder', 'insured name']),
+  named_drivers: namedDriversArray, // Keep as array
+  named_drivers_string: namedDriversArray.join(', '), // String version for display
+  insurance_state: extractInsuranceState(),
+  insurer_contact_info: extractInsurerContactInfo(),
+  vehicle_vin: findInsuranceVIN(),
+  vehicle_year: extractField(['year', 'yr']),
+  vehicle_make: extractField(['make']),
+  vehicle_model: extractField(['model'])
+};
     
     debugLog('Extracted insurance data', data);
     
