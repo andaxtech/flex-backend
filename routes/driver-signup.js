@@ -323,7 +323,7 @@ if (existingUser.rows.length > 0) {
         phone_verified,
         email_verified_at,
         phone_verified_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
       RETURNING driver_id`,
       [
         user_id,
