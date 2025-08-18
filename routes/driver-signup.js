@@ -389,7 +389,7 @@ if (existingUser.rows.length > 0) {
         driverData.body_type,
         driverData.vin_number,
         driverData.license_plate,
-        sanitizeDate(driverData.registration_expiration || driverData.vehicle_registration_expiration),
+        sanitizeDate(driverData.vehicle_registration_expiration || driverData.registration_expiration),
         sanitizeDate(driverData.registration_issued_date || driverData.vehicle_registration_issued_date),
         encryptedData.registered_owner_names_encrypted,
         encryptedData.ca_title_number_encrypted,
