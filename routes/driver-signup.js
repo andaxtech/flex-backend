@@ -510,61 +510,6 @@ if (existingUser.rows.length > 0) {
   }
 });
 
-// Check partial registration status
-router.get('/api/drivers/partial-registration/:clerkUserId', async (req, res) => {
-  const { clerkUserId } = req.params;
-  const client = await pool.connect();
-  
-  try {
-    // Check if user exists in users table but not in drivers table
-    const userCheck = await client.query(
-      `SELECT u.user_id, u.email, u.clerk_user_id, u.created_at,
-              EXISTS(SELECT 1 FROM drivers d WHERE d.user_id = u.user_id) as has_driver_record
-       FROM users u 
-       WHERE u.clerk_user_id = $1`,
-      [clerkUserId]
-    );
-    
-    if (userCheck.rows.length === 0) {
-      // No user record at all
-      return res.status(404).json({ 
-        hasPartialRegistration: false,
-        message: 'No user found' 
-      });
-    }
-    
-    const user = userCheck.rows[0];
-    
-    if (user.has_driver_record) {
-      // They have a driver record, not a partial registration
-      return res.status(200).json({ 
-        hasPartialRegistration: false,
-        message: 'User has completed driver registration' 
-      });
-    }
-    
-    // They have a user record but no driver record - partial registration
-    console.log('[PARTIAL REG] Found incomplete registration for user:', user.user_id);
-    
-    return res.status(200).json({
-      hasPartialRegistration: true,
-      userId: user.user_id,
-      email: user.email,
-      registrationStarted: user.created_at,
-      message: 'User started but did not complete registration'
-    });
-    
-  } catch (error) {
-    console.error('[PARTIAL REG] Error checking partial registration:', error);
-    res.status(500).json({ 
-      error: 'Failed to check registration status',
-      message: error.message 
-    });
-  } finally {
-    client.release();
-  }
-});
-
 // Debug middleware to log all requests to these routes
 router.use((req, res, next) => {
   console.log(`[ROUTER] ${req.method} ${req.path} - ${new Date().toISOString()}`);
