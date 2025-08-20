@@ -714,19 +714,31 @@ Then extract ALL information and perform fraud/consistency checks.
   }
 }
     ` : `
-You are an OCR extraction engine. Verify this is a driver license BACK and return ONLY a valid JSON object.
-
 {
-  "document_type": "license_back or wrong_document",
+  "document_type": "license_back",
   "data": {
-    "barcode_data": "extract any barcode data or null",
-    "magnetic_stripe_data": "extract any magnetic stripe info or null",
-    "additional_info": "extract any other relevant information or null"
+    "barcode_data": null,
+    "magnetic_stripe_data": null,
+    "additional_info": "OCR disabled for back of license"
   },
-  "matches_front": true/false
+  "matches_front": true
 }
     `;
 
+    // Skip OCR for back of license
+    if (side === 'back') {
+      console.log('OCR disabled for back of license - returning placeholder');
+      return {
+        document_type: 'license_back',
+        data: {
+          barcode_data: null,
+          magnetic_stripe_data: null,
+          additional_info: 'OCR disabled for back of license'
+        },
+        matches_front: true
+      };
+    }
+    
     console.log(`Calling OpenAI for ${side} side extraction...`);
     
     const response = await openai.chat.completions.create({
