@@ -653,25 +653,31 @@ router.use((req, res, next) => {
   next();
 });
 
-// Test endpoint to verify GCS connection
-router.get('/test-gcs', async (req, res) => {
+// Add this after your existing test-gcs endpoint
+router.get('/check-file/:filename', async (req, res) => {
   try {
     const { bucket } = require('../config/gcsConfig');
-    const [files] = await bucket.getFiles({ maxResults: 5 });
+    const filename = req.params.filename;
+    const fullPath = `licenses/back/${filename}`;
     
-    res.json({ 
-      success: true, 
-      message: 'GCS connected successfully',
-      bucketName: process.env.GCS_BUCKET_NAME,
-      filesCount: files.length,
-      files: files.map(f => f.name)
-    });
+    const file = bucket.file(fullPath);
+    const [exists] = await file.exists();
+    
+    if (exists) {
+      const [metadata] = await file.getMetadata();
+      res.json({
+        exists: true,
+        path: fullPath,
+        size: metadata.size,
+        contentType: metadata.contentType,
+        created: metadata.timeCreated,
+        updated: metadata.updated
+      });
+    } else {
+      res.json({ exists: false, path: fullPath });
+    }
   } catch (error) {
-    console.error('GCS test error:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
+    res.status(500).json({ error: error.message });
   }
 });
 
