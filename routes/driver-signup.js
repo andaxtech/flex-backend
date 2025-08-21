@@ -693,7 +693,7 @@ router.get('/test-signed-url/:gcsPath', async (req, res) => {
   }
 });
 
-// View image endpoint
+// View image endpoint with debugging
 router.get('/view-image', async (req, res) => {
   try {
     const { path } = req.query;
@@ -701,8 +701,25 @@ router.get('/view-image', async (req, res) => {
       return res.status(400).json({ error: 'Path parameter required' });
     }
     
+    console.log('[VIEW-IMAGE] Requesting path:', path);
+    
     const { getSignedUrl } = require('../utils/gcsStorage');
     const signedUrl = await getSignedUrl(path);
+    
+    console.log('[VIEW-IMAGE] Generated signed URL:', signedUrl);
+    
+    // Try to verify the file exists first
+    const { bucket } = require('../config/gcsConfig');
+    const file = bucket.file(path);
+    const [exists] = await file.exists();
+    
+    if (!exists) {
+      return res.status(404).json({ 
+        error: 'File not found in GCS',
+        path: path 
+      });
+    }
+    
     
     // Return HTML with the image
     res.send(`
@@ -736,18 +753,31 @@ router.get('/view-image', async (req, res) => {
               color: #666;
               word-break: break-all;
             }
+            .error {
+              color: red;
+              padding: 20px;
+              background: #ffe0e0;
+              border-radius: 8px;
+            }
           </style>
         </head>
         <body>
           <div class="container">
-            <img src="${signedUrl}" alt="Document" />
+            <img src="${signedUrl}" alt="Document" onerror="this.style.display='none'; document.getElementById('error').style.display='block';" />
+            <div id="error" style="display:none;" class="error">
+              Failed to load image. The signed URL may have expired or the file may not exist.
+            </div>
             <div class="path">Path: ${path}</div>
           </div>
         </body>
       </html>
     `);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('[VIEW-IMAGE] Error:', error);
+    res.status(500).json({ 
+      error: error.message,
+      stack: error.stack 
+    });
   }
 });
 
