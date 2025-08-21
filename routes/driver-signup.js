@@ -247,13 +247,19 @@ const gcsUploads = {};
 
 try {
   // Upload driver license photos
-if (driverData.driver_license_photo_front_url) {
-  // The data is already base64, just pass it through
-  gcsUploads.driver_license_photo_front_gcs_path = await uploadToGCS(
-    driverData.driver_license_photo_front_url, 
-    'license_front'
-  );
-}
+  if (driverData.driver_license_photo_front_url) {
+    console.log('[SIGNUP] Uploading license front, data length:', driverData.driver_license_photo_front_url.length);
+    try {
+      gcsUploads.driver_license_photo_front_gcs_path = await uploadToGCS(
+        driverData.driver_license_photo_front_url, 
+        'license_front'
+      );
+      console.log('[SIGNUP] License front uploaded successfully:', gcsUploads.driver_license_photo_front_gcs_path);
+    } catch (uploadError) {
+      console.error('[SIGNUP] License front upload failed:', uploadError);
+      throw uploadError;
+    }
+  }
   
   if (driverData.driver_license_photo_back_url) {
     gcsUploads.driver_license_photo_back_gcs_path = await uploadToGCS(
