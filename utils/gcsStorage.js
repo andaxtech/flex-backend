@@ -55,9 +55,16 @@ async function getSignedUrl(gcsPath, expirationMinutes = 60) {
   try {
     const file = bucket.file(gcsPath);
     
+    // Check if file exists
+    const [exists] = await file.exists();
+    if (!exists) {
+      throw new Error(`File not found: ${gcsPath}`);
+    }
+    
     const [signedUrl] = await file.getSignedUrl({
+      version: 'v4',  // Use v4 signing
       action: 'read',
-      expires: Date.now() + expirationMinutes * 60 * 1000
+      expires: Date.now() + expirationMinutes * 60 * 1000,
     });
     
     return signedUrl;
