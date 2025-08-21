@@ -247,12 +247,13 @@ const gcsUploads = {};
 
 try {
   // Upload driver license photos
-  if (driverData.driver_license_photo_front_url) {
-    gcsUploads.driver_license_photo_front_gcs_path = await uploadToGCS(
-      driverData.driver_license_photo_front_url, 
-      'license_front'
-    );
-  }
+if (driverData.driver_license_photo_front_url) {
+  // The data is already base64, just pass it through
+  gcsUploads.driver_license_photo_front_gcs_path = await uploadToGCS(
+    driverData.driver_license_photo_front_url, 
+    'license_front'
+  );
+}
   
   if (driverData.driver_license_photo_back_url) {
     gcsUploads.driver_license_photo_back_gcs_path = await uploadToGCS(
