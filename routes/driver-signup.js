@@ -1,5 +1,6 @@
 // routes/driver-signup.js
 const express = require('express');
+const { uploadToGCS, getSignedUrl } = require('../utils/gcsStorage');
 const router = express.Router();
 const multer = require('multer');
 const ocrController = require('../controllers/ocrController');
@@ -237,6 +238,56 @@ if (!driverData.insurance_state || !driverData.insurance_state.match(/^[A-Z]{2}$
       });
     }
 
+
+
+       
+    // Upload all images to GCS before starting transaction
+console.log('[SIGNUP] Uploading images to GCS...');
+const gcsUploads = {};
+
+try {
+  // Upload driver license photos
+  if (driverData.driver_license_photo_front_url) {
+    gcsUploads.driver_license_photo_front_gcs_path = await uploadToGCS(
+      driverData.driver_license_photo_front_url, 
+      'license_front'
+    );
+  }
+  
+  if (driverData.driver_license_photo_back_url) {
+    gcsUploads.driver_license_photo_back_gcs_path = await uploadToGCS(
+      driverData.driver_license_photo_back_url, 
+      'license_back'
+    );
+  }
+  
+  // Upload profile/selfie photo
+  if (driverData.profile_photo_url) {
+    gcsUploads.profile_photo_gcs_path = await uploadToGCS(
+      driverData.profile_photo_url, 
+      'selfie'
+    );
+  }
+  
+  // Upload reference face photo
+  if (driverData.reference_face_photo_url) {
+    gcsUploads.reference_face_photo_gcs_path = await uploadToGCS(
+      driverData.reference_face_photo_url, 
+      'selfie'
+    );
+  }
+  
+  console.log('[SIGNUP] GCS uploads completed:', Object.keys(gcsUploads));
+} catch (uploadError) {
+  console.error('[SIGNUP] GCS upload failed:', uploadError);
+  return res.status(500).json({
+    success: false,
+    error: 'Failed to upload documents',
+    message: uploadError.message
+  });
+}
+
+
     // START TRANSACTION AFTER VALIDATION
     await client.query('BEGIN');
 
@@ -307,14 +358,14 @@ if (existingUser.rows.length > 0) {
         email,
         driver_license_number,
         driver_license_expiration,
-    birth_date,
+        birth_date,
         driver_license_state_issued,
         document_discriminator_encrypted,
         residence_address_encrypted,
-        driver_license_photo_front_url,
-        driver_license_photo_back_url,
-        profile_photo_url,
-        reference_face_photo_url,
+        driver_license_photo_front_gcs_path,
+        driver_license_photo_back_gcs_path,
+        profile_photo_gcs_path,
+        reference_face_photo_gcs_path,
         reference_face_uploaded_at,
         city,
         zip_code,
@@ -333,28 +384,85 @@ if (existingUser.rows.length > 0) {
         driverData.email,
         driverData.driver_license_number,
         sanitizeDate(driverData.driver_license_expiration),
-        sanitizeDate(driverData.birth_date), 
+        sanitizeDate(driverData.birth_date),
         driverData.driver_license_state_issued,
         encryptedData.document_discriminator_encrypted,
-    encryptedData.residence_address_encrypted,
-        driverData.driver_license_photo_front_url,
-        driverData.driver_license_photo_back_url,
-        driverData.profile_photo_url,
-        driverData.reference_face_photo_url,
+        encryptedData.residence_address_encrypted,
+        gcsUploads.driver_license_photo_front_gcs_path || null,  // Changed
+        gcsUploads.driver_license_photo_back_gcs_path || null,   // Changed
+        gcsUploads.profile_photo_gcs_path || null,               // Changed
+        gcsUploads.reference_face_photo_gcs_path || null,        // Changed
         sanitizeDate(driverData.reference_face_uploaded_at),
         driverData.city,
         driverData.zip_code,
         driverData.requires_manual_review ? 'pending_review' : 'pending',
-        true, // email_verified (from Clerk)
-        true,  // phone_verified (from Clerk)
-        new Date(),  // email_verified_at - current timestamp since coming from Clerk
-        new Date()   // phone_verified_at - current timestamp since coming from Clerk
+        true,
+        true,
+        new Date(),
+        new Date()
       ]
     );
     const driver_id = driverRes.rows[0].driver_id;
     console.log('[SIGNUP] Created driver with ID:', driver_id);
     
-    
+    // Upload car images to GCS
+const carGcsUploads = {};
+
+try {
+  if (driverData.vehicle_registration_photo_url) {
+    carGcsUploads.vehicle_registration_photo_gcs_path = await uploadToGCS(
+      driverData.vehicle_registration_photo_url,
+      'registration'
+    );
+  }
+  
+  if (driverData.license_plate_photo_url) {
+    carGcsUploads.license_plate_photo_gcs_path = await uploadToGCS(
+      driverData.license_plate_photo_url,
+      'plate'
+    );
+  }
+  
+  if (driverData.car_image_front) {
+    carGcsUploads.car_image_front_gcs_path = await uploadToGCS(
+      driverData.car_image_front,
+      'vehicle_front'
+    );
+  }
+  
+  if (driverData.car_image_back) {
+    carGcsUploads.car_image_back_gcs_path = await uploadToGCS(
+      driverData.car_image_back,
+      'vehicle_back'
+    );
+  }
+  
+  if (driverData.car_image_left) {
+    carGcsUploads.car_image_left_gcs_path = await uploadToGCS(
+      driverData.car_image_left,
+      'vehicle_left'
+    );
+  }
+  
+  if (driverData.car_image_right) {
+    carGcsUploads.car_image_right_gcs_path = await uploadToGCS(
+      driverData.car_image_right,
+      'vehicle_right'
+    );
+  }
+  
+  console.log('[SIGNUP] Car GCS uploads completed:', Object.keys(carGcsUploads));
+} catch (uploadError) {
+  await client.query('ROLLBACK');
+  console.error('[SIGNUP] Car GCS upload failed:', uploadError);
+  return res.status(500).json({
+    success: false,
+    error: 'Failed to upload vehicle documents',
+    message: uploadError.message
+  });
+}
+
+
     // Step 3: Insert into car_details table
     const carRes = await client.query(
       `INSERT INTO car_details (
@@ -370,12 +478,12 @@ if (existingUser.rows.length > 0) {
         vehicle_registration_issued_date,
         registered_owner_names_encrypted,
         ca_title_number_encrypted,
-        vehicle_registration_photo_url,
-        license_plate_photo_url,
-        car_image_front,
-        car_image_back,
-        car_image_left,
-        car_image_right,
+        vehicle_registration_photo_gcs_path,
+        license_plate_photo_gcs_path,
+        car_image_front_gcs_path,
+        car_image_back_gcs_path,
+        car_image_left_gcs_path,
+        car_image_right_gcs_path,
         vehicle_photos,
         inspection_status
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
@@ -393,12 +501,12 @@ if (existingUser.rows.length > 0) {
         sanitizeDate(driverData.registration_issued_date || driverData.vehicle_registration_issued_date),
         encryptedData.registered_owner_names_encrypted,
         encryptedData.ca_title_number_encrypted,
-        driverData.vehicle_registration_photo_url,
-        driverData.license_plate_photo_url,
-        driverData.car_image_front,
-        driverData.car_image_back,
-        driverData.car_image_left,
-        driverData.car_image_right,
+        carGcsUploads.vehicle_registration_photo_gcs_path || null,  // Changed
+        carGcsUploads.license_plate_photo_gcs_path || null,         // Changed
+        carGcsUploads.car_image_front_gcs_path || null,             // Changed
+        carGcsUploads.car_image_back_gcs_path || null,              // Changed
+        carGcsUploads.car_image_left_gcs_path || null,              // Changed
+        carGcsUploads.car_image_right_gcs_path || null,             // Changed
         driverData.vehicle_photos || '[]',
         driverData.inspection_status || 'pending'
       ]
@@ -406,43 +514,72 @@ if (existingUser.rows.length > 0) {
     const car_id = carRes.rows[0].car_id;
     console.log('[SIGNUP] Created car details with ID:', car_id);
     
-    // Step 4: Insert into insurance_details table
-    await client.query(
-      `INSERT INTO insurance_details (
-        driver_id,
-        car_id,
-        insurance_provider,
-        insurance_policy_number,
-        policy_start_date,
-        policy_end_date,
-        insured_names_encrypted,
-        named_drivers_encrypted,
-        insurance_state,
-        insurer_contact_info,
-        insurance_card_photo_url,
-        insurance_verification_issues,
-        insurance_explanation,
-        additional_document_url
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
-      [
-        driver_id,
-        car_id,
-        driverData.insurance_provider,
-        driverData.insurance_policy_number,
-        sanitizeDate(driverData.policy_start_date),
-        sanitizeDate(driverData.policy_end_date),
-        encryptedData.insured_names_encrypted,
-        encryptedData.named_drivers_encrypted,
-        (driverData.insurance_state && driverData.insurance_state.match(/^[A-Z]{2}$/))
-        ? driverData.insurance_state
-        : driverData.driver_license_state_issued || 'CA', 
-        driverData.insurer_contact_info,
-        driverData.insurance_card_photo_url,
-        JSON.stringify(driverData.insurance_verification_issues || []),
-        driverData.insurance_explanation,
-        driverData.additional_document_url
-      ]
+    // Upload insurance images to GCS
+const insuranceGcsUploads = {};
+
+try {
+  if (driverData.insurance_card_photo_url) {
+    insuranceGcsUploads.insurance_card_photo_gcs_path = await uploadToGCS(
+      driverData.insurance_card_photo_url,
+      'insurance'
     );
+  }
+  
+  if (driverData.additional_document_url) {
+    insuranceGcsUploads.additional_document_gcs_path = await uploadToGCS(
+      driverData.additional_document_url,
+      'insurance'
+    );
+  }
+  
+  console.log('[SIGNUP] Insurance GCS uploads completed:', Object.keys(insuranceGcsUploads));
+} catch (uploadError) {
+  await client.query('ROLLBACK');
+  console.error('[SIGNUP] Insurance GCS upload failed:', uploadError);
+  return res.status(500).json({
+    success: false,
+    error: 'Failed to upload insurance documents',
+    message: uploadError.message
+  });
+}
+
+   // Step 4: Insert into insurance_details table
+await client.query(
+  `INSERT INTO insurance_details (
+    driver_id,
+    car_id,
+    insurance_provider,
+    insurance_policy_number,
+    policy_start_date,
+    policy_end_date,
+    insured_names_encrypted,
+    named_drivers_encrypted,
+    insurance_state,
+    insurer_contact_info,
+    insurance_card_photo_gcs_path,
+    insurance_verification_issues,
+    insurance_explanation,
+    additional_document_gcs_path
+  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+  [
+    driver_id,
+    car_id,
+    driverData.insurance_provider,
+    driverData.insurance_policy_number,
+    sanitizeDate(driverData.policy_start_date),
+    sanitizeDate(driverData.policy_end_date),
+    encryptedData.insured_names_encrypted,
+    encryptedData.named_drivers_encrypted,
+    (driverData.insurance_state && driverData.insurance_state.match(/^[A-Z]{2}$/))
+      ? driverData.insurance_state
+      : driverData.driver_license_state_issued || 'CA',
+    driverData.insurer_contact_info,
+    insuranceGcsUploads.insurance_card_photo_gcs_path || null,     // Changed
+    JSON.stringify(driverData.insurance_verification_issues || []),
+    driverData.insurance_explanation,
+    insuranceGcsUploads.additional_document_gcs_path || null       // Changed
+  ]
+);
     console.log('[SIGNUP] Created insurance details');
     
     // Step 5: Insert into background_checks table
@@ -514,6 +651,46 @@ if (existingUser.rows.length > 0) {
 router.use((req, res, next) => {
   console.log(`[ROUTER] ${req.method} ${req.path} - ${new Date().toISOString()}`);
   next();
+});
+
+// Test endpoint to verify GCS connection
+router.get('/test-gcs', async (req, res) => {
+  try {
+    const { bucket } = require('../config/gcsConfig');
+    const [files] = await bucket.getFiles({ maxResults: 5 });
+    
+    res.json({ 
+      success: true, 
+      message: 'GCS connected successfully',
+      bucketName: process.env.GCS_BUCKET_NAME,
+      filesCount: files.length,
+      files: files.map(f => f.name)
+    });
+  } catch (error) {
+    console.error('GCS test error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Test endpoint to get a signed URL
+router.get('/test-signed-url/:gcsPath', async (req, res) => {
+  try {
+    const { getSignedUrl } = require('../utils/gcsStorage');
+    const signedUrl = await getSignedUrl(req.params.gcsPath);
+    
+    res.json({ 
+      success: true, 
+      signedUrl: signedUrl
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
 });
 
 // Export the router
