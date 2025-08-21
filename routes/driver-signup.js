@@ -693,5 +693,203 @@ router.get('/test-signed-url/:gcsPath', async (req, res) => {
   }
 });
 
+// View image endpoint
+router.get('/view-image', async (req, res) => {
+  try {
+    const { path } = req.query;
+    if (!path) {
+      return res.status(400).json({ error: 'Path parameter required' });
+    }
+    
+    const { getSignedUrl } = require('../utils/gcsStorage');
+    const signedUrl = await getSignedUrl(path);
+    
+    // Return HTML with the image
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Image Viewer</title>
+          <style>
+            body {
+              margin: 0;
+              display: flex;
+              justify-content: center;
+              align-items: center;
+              min-height: 100vh;
+              background: #f0f0f0;
+              font-family: Arial, sans-serif;
+            }
+            .container {
+              text-align: center;
+              padding: 20px;
+            }
+            img {
+              max-width: 90%;
+              max-height: 80vh;
+              box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+              border-radius: 8px;
+            }
+            .path {
+              margin-top: 10px;
+              font-size: 12px;
+              color: #666;
+              word-break: break-all;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <img src="${signedUrl}" alt="Document" />
+            <div class="path">Path: ${path}</div>
+          </div>
+        </body>
+      </html>
+    `);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// List all images for a driver
+router.get('/driver-images/:driverId', async (req, res) => {
+  try {
+    const driverId = req.params.driverId;
+    
+    // Get all image paths for this driver
+    const query = `
+      SELECT 
+        d.driver_id,
+        d.first_name,
+        d.last_name,
+        d.driver_license_photo_front_gcs_path,
+        d.driver_license_photo_back_gcs_path,
+        d.profile_photo_gcs_path,
+        d.reference_face_photo_gcs_path,
+        c.vehicle_registration_photo_gcs_path,
+        c.license_plate_photo_gcs_path,
+        c.car_image_front_gcs_path,
+        c.car_image_back_gcs_path,
+        c.car_image_left_gcs_path,
+        c.car_image_right_gcs_path,
+        i.insurance_card_photo_gcs_path,
+        i.additional_document_gcs_path
+      FROM drivers d
+      LEFT JOIN car_details c ON d.driver_id = c.driver_id
+      LEFT JOIN insurance_details i ON d.driver_id = i.driver_id
+      WHERE d.driver_id = $1
+    `;
+    
+    const result = await pool.query(query, [driverId]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Driver not found' });
+    }
+    
+    const driver = result.rows[0];
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    
+    // Build HTML with all images
+    let html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Driver Images - ${driver.first_name} ${driver.last_name}</title>
+          <style>
+            body {
+              font-family: Arial, sans-serif;
+              margin: 20px;
+              background: #f5f5f5;
+            }
+            h1 {
+              color: #333;
+            }
+            .image-grid {
+              display: grid;
+              grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+              gap: 20px;
+              margin-top: 20px;
+            }
+            .image-card {
+              background: white;
+              border-radius: 8px;
+              padding: 15px;
+              box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }
+            .image-card h3 {
+              margin: 0 0 10px 0;
+              color: #2563eb;
+            }
+            .image-card img {
+              width: 100%;
+              height: 200px;
+              object-fit: contain;
+              border: 1px solid #eee;
+              border-radius: 4px;
+              cursor: pointer;
+            }
+            .no-image {
+              width: 100%;
+              height: 200px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              background: #f0f0f0;
+              border: 1px dashed #ccc;
+              border-radius: 4px;
+              color: #999;
+            }
+          </style>
+        </head>
+        <body>
+          <h1>Driver Images: ${driver.first_name} ${driver.last_name} (ID: ${driver.driver_id})</h1>
+          <div class="image-grid">
+    `;
+    
+    const imageTypes = [
+      { path: driver.driver_license_photo_front_gcs_path, label: 'License Front' },
+      { path: driver.driver_license_photo_back_gcs_path, label: 'License Back' },
+      { path: driver.profile_photo_gcs_path, label: 'Profile Photo' },
+      { path: driver.reference_face_photo_gcs_path, label: 'Reference Face' },
+      { path: driver.vehicle_registration_photo_gcs_path, label: 'Vehicle Registration' },
+      { path: driver.license_plate_photo_gcs_path, label: 'License Plate' },
+      { path: driver.car_image_front_gcs_path, label: 'Car Front' },
+      { path: driver.car_image_back_gcs_path, label: 'Car Back' },
+      { path: driver.car_image_left_gcs_path, label: 'Car Left' },
+      { path: driver.car_image_right_gcs_path, label: 'Car Right' },
+      { path: driver.insurance_card_photo_gcs_path, label: 'Insurance Card' },
+      { path: driver.additional_document_gcs_path, label: 'Additional Document' }
+    ];
+    
+    for (const imgType of imageTypes) {
+      html += `
+        <div class="image-card">
+          <h3>${imgType.label}</h3>
+      `;
+      
+      if (imgType.path) {
+        const viewUrl = `${baseUrl}/view-image?path=${encodeURIComponent(imgType.path)}`;
+        html += `<img src="${viewUrl}" onclick="window.open('${viewUrl}', '_blank')" alt="${imgType.label}" />`;
+      } else {
+        html += `<div class="no-image">No image uploaded</div>`;
+      }
+      
+      html += `</div>`;
+    }
+    
+    html += `
+          </div>
+        </body>
+      </html>
+    `;
+    
+    res.send(html);
+    
+  } catch (error) {
+    console.error('Error getting driver images:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Export the router
 module.exports = router;

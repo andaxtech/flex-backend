@@ -13,3 +13,4 @@ logs/
 *.swp
 .vscode/
 "quickflex-storage-key.json" 
+quickflex-storage-key.json 
