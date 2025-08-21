@@ -12,3 +12,4 @@ logs/
 .DS_Store
 *.swp
 .vscode/
+"quickflex-storage-key.json" 
