@@ -23,8 +23,8 @@ exports.getDriverById = async (req, res) => {
         last_name,
         phone_number,
         email,
-        reference_face_photo_url,
-        profile_photo_url,
+        reference_face_photo_gcs_path,    
+        profile_photo_gcs_path,           
         status
       FROM drivers 
       WHERE driver_id = $1
@@ -44,8 +44,8 @@ exports.getDriverById = async (req, res) => {
       last_name: driver.last_name,
       phone: driver.phone_number,
       email: driver.email,
-      profile_image: driver.profile_photo_url || driver.reference_face_photo_url || '',
-      profileImage: driver.profile_photo_url || driver.reference_face_photo_url || '', // For compatibility with frontend
+      profile_image: driver.profile_photo_gcs_path || driver.reference_face_photo_gcs_path || '',
+      profileImage: driver.profile_photo_gcs_path || driver.reference_face_photo_gcs_path || '', 
       status: driver.status
     });
   } catch (error) {
@@ -66,8 +66,8 @@ exports.getDriverByUserId = async (req, res) => {
         d.last_name,
         d.phone_number,
         d.email,
-        d.profile_photo_url,
-        d.reference_face_photo_url,
+        d.profile_photo_gcs_path,
+        d.reference_face_photo_gcs_path,
         d.status,
         d.city,
         d.zip_code,
@@ -91,7 +91,7 @@ exports.getDriverByUserId = async (req, res) => {
       last_name: driver.last_name,
       phone: driver.phone_number,
       email: driver.email,
-      profile_image: driver.profile_photo_url || driver.reference_face_photo_url || '',
+      profile_image: driver.profile_photo_gcs_path || driver.reference_face_photo_gcs_path || '',
       status: driver.status,
       city: driver.city,
       zip_code: driver.zip_code,
@@ -115,8 +115,8 @@ exports.getDriverByClerkId = async (req, res) => {
         d.last_name,
         d.phone_number,
         d.email,
-        d.profile_photo_url,
-        d.reference_face_photo_url,
+        d.profile_photo_gcs_path,         
+    d.reference_face_photo_gcs_path,  
         d.status,
         d.city,
         d.zip_code,
@@ -142,7 +142,7 @@ exports.getDriverByClerkId = async (req, res) => {
       last_name: driver.last_name,
       phone: driver.phone_number,
       email: driver.email,
-      profile_image: driver.profile_photo_url || driver.reference_face_photo_url || '',
+      profile_image: driver.profile_photo_gcs_path || driver.reference_face_photo_gcs_path || '',
       status: driver.status,
       city: driver.city,
       zip_code: driver.zip_code,
