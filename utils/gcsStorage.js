@@ -21,30 +21,32 @@ async function uploadToGCS(base64Data, documentType) {
     
     console.log(`[GCS Upload] Base64 length after extraction: ${base64.length}`);
     
-    // Validate base64 string
-if (!base64 || base64.length === 0) {
-  throw new Error('Base64 string is empty');
-}
+                                  // Validate base64 string
+                                if (!base64 || base64.length === 0) {
+                                  throw new Error('Base64 string is empty');
+                                }
 
-// Remove any whitespace or newlines
-base64 = base64.replace(/\s/g, '');
+                                // Remove any whitespace or newlines
+                                base64 = base64.replace(/\s/g, '');
 
-// Validate it's valid base64
-if (!/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) {
-  throw new Error('Invalid base64 string');
-}
+                                // Validate it's valid base64
+                                if (!/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) {
+                                  throw new Error('Invalid base64 string');
+                                }
 
-const buffer = Buffer.from(base64, 'base64');
-console.log(`[GCS Upload] Buffer size: ${buffer.length} bytes`);
+                                // Create buffer from base64
+                                const buffer = Buffer.from(base64, 'base64');
+                                console.log(`[GCS Upload] Buffer size: ${buffer.length} bytes`);
 
-// Verify buffer is a valid image
-if (buffer.length < 100) {
-  throw new Error('Buffer too small to be a valid image');
-}
-    
-    if (buffer.length === 0) {
-      throw new Error('Buffer is empty after base64 decode');
-    }
+                                // Verify buffer is valid
+                                if (buffer.length === 0) {
+                                  throw new Error('Empty buffer - no image data');
+                                }
+
+                                // Verify buffer is a valid image (minimum size check)
+                                if (buffer.length < 100) {
+                                  throw new Error('Buffer too small to be a valid image');
+                                }
     
     // Determine folder path based on document type
     const folderPaths = {
