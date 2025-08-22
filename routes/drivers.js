@@ -27,6 +27,8 @@ router.get('/drivers/:id/insurance', driverController.getDriverInsuranceDetails)
 // Get driver's next block
 router.get('/drivers/:id/next-block', driverController.getNextBlock);
 
+router.get('/driver/:driver_id/dashboard', driverController.getDriverDashboard);
+
 // REMOVED the signup route - it's now handled in driver-signup.js
 // router.post('/signup-driver', driverController.signupDriver); ← DELETED
 
