@@ -3,6 +3,16 @@ const pool = require('../db');
 const extractText = require('../utils/ocr');
 const uploadImage = require('../utils/upload');
 
+// Add this at the top with other requires
+const fixedOffsetToMinutes = (offsetStr) => {
+  const match = offsetStr.match(/GMT([+-])(\d{2}):(\d{2})/);
+  if (!match) return 0;
+  const sign = match[1] === '+' ? 1 : -1;
+  const hours = parseInt(match[2], 10);
+  const mins = parseInt(match[3], 10);
+  return sign * (hours * 60 + mins);
+};
+
 exports.startDelivery = async (req, res) => {
   const { driver_id, block_id, claim_id, device_local_time } = req.body;
   const filePath = req.file?.path;
@@ -110,7 +120,6 @@ exports.startDelivery = async (req, res) => {
   }
 }; // THIS WAS MISSING!
 
-// Add this function to your deliveryController.js
 exports.completeDelivery = async (req, res) => {
   const client = await pool.connect();
   try {
@@ -151,19 +160,106 @@ exports.completeDelivery = async (req, res) => {
     const startTime = new Date(completedDelivery.created_at).getTime();
     const endTime = new Date(completedDelivery.completed_at).getTime();
     const durationSeconds = Math.floor((endTime - startTime) / 1000);
+    const deliveryMinutes = Math.floor(durationSeconds / 60);
     
-    // Calculate Pizza Points
+    // Calculate Pizza Points based on delivery time
     let pizzaPoints = 5; // Default participation points
-    if (durationSeconds <= 900) pizzaPoints = 50;      // 15 min or less
-    else if (durationSeconds <= 1200) pizzaPoints = 30; // 20 min or less
-    else if (durationSeconds <= 1500) pizzaPoints = 20; // 25 min or less
-    else if (durationSeconds <= 1800) pizzaPoints = 10; // 30 min or less
+    let eventType = 'delivery_completed';
     
-    // Update driver's pizza points (if you have a pizza_points table)
-    // await client.query(
-    //   'INSERT INTO pizza_points (driver_id, delivery_log_id, points, earned_at) VALUES ($1, $2, $3, NOW())',
-    //   [completedDelivery.driver_id, deliveryLogId, pizzaPoints]
-    // );
+    if (deliveryMinutes <= 15) {
+      pizzaPoints = 50;
+      eventType = 'ultra_fast_delivery';
+    } else if (deliveryMinutes <= 20) {
+      pizzaPoints = 30;
+      eventType = 'on_time_delivery';
+    } else if (deliveryMinutes <= 25) {
+      pizzaPoints = 20;
+      eventType = 'on_time_delivery';
+    } else if (deliveryMinutes <= 30) {
+      pizzaPoints = 10;
+      eventType = 'on_time_delivery';
+    }
+
+    // Award Pizza Points for delivery completion
+    await client.query(`
+      INSERT INTO pizza_points (driver_id, event_type, points, event_time, delivery_id, block_id, claim_id, metadata)
+      VALUES ($1, $2, $3, NOW(), $4, $5, $6, $7)
+    `, [
+      completedDelivery.driver_id,
+      eventType,
+      pizzaPoints,
+      deliveryLogId,
+      completedDelivery.block_id,
+      completedDelivery.claim_id,
+      JSON.stringify({
+        delivery_time_minutes: deliveryMinutes,
+        order_number: completedDelivery.order_number,
+        order_total: completedDelivery.order_total,
+        customer_name: completedDelivery.customer_name
+      })
+    ]);
+
+    // Check for rush hour bonus (Thu-Sat 6-9PM in store's local time)
+    if (completedDelivery.store_id) {
+      const storeQuery = await client.query(`
+        SELECT l.time_zone_code
+        FROM locations l
+        WHERE l.store_id = $1
+      `, [completedDelivery.store_id]);
+
+      if (storeQuery.rows.length > 0) {
+        const { time_zone_code } = storeQuery.rows[0];
+        
+        // Parse the store's timezone offset
+        const offsetMinutes = fixedOffsetToMinutes(time_zone_code);
+        
+        // Get the delivery creation time (when order was placed)
+        const deliveryDateUTC = new Date(completedDelivery.created_at);
+        
+        // Convert to store local time using your formula: storeLocalTime = UTC + offsetMinutes
+        const storeLocalTimeMs = deliveryDateUTC.getTime() + offsetMinutes * 60000;
+        
+        // Extract components manually to avoid JS Date timezone issues
+        const totalMinutes = Math.floor(storeLocalTimeMs / 60000);
+        const daysSinceEpoch = Math.floor(totalMinutes / (24 * 60));
+        const dayMinutes = totalMinutes % (24 * 60);
+        const hours = Math.floor(dayMinutes / 60);
+        
+        // Calculate day of week (0 = Sunday, 4 = Thursday, 5 = Friday, 6 = Saturday)
+        // January 1, 1970 was a Thursday (4)
+        const dayOfWeek = (daysSinceEpoch + 4) % 7;
+        
+        // Check if it's Thu-Sat 6-9PM
+        if ((dayOfWeek === 4 || dayOfWeek === 5 || dayOfWeek === 6) && hours >= 18 && hours < 21) {
+          await client.query(`
+            INSERT INTO pizza_points (driver_id, event_type, points, event_time, delivery_id, block_id, claim_id, metadata)
+            VALUES ($1, $2, $3, NOW(), $4, $5, $6, $7)
+          `, [
+            completedDelivery.driver_id,
+            'rush_hour_delivery',
+            20,
+            deliveryLogId,
+            completedDelivery.block_id,
+            completedDelivery.claim_id,
+            JSON.stringify({
+              day_of_week: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dayOfWeek],
+              hour: hours,
+              store_timezone: time_zone_code,
+              store_local_time: new Date(storeLocalTimeMs).toISOString(),
+              utc_time: deliveryDateUTC.toISOString(),
+              offset_minutes: offsetMinutes,
+              is_peak: true
+            })
+          ]);
+          pizzaPoints += 20;
+          console.log(`🔥 Awarded 20 PP rush hour bonus for ${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dayOfWeek]} at ${hours}:00 store time`);
+        }
+      }
+    }
+
+    // TODO: Check for achievements after awarding points
+    // await checkAndAwardBadges(client, completedDelivery.driver_id);
+    // Note: You'll need to either import this function or implement badge checking later
     
     await client.query('COMMIT');
     

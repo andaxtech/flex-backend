@@ -1201,6 +1201,27 @@ exports.checkInBlock = async (req, res) => {
       confidence: verificationConfidence
     });
 
+    // Award Pizza Points for fast check-in (within 5 minutes of block start)
+const checkInMinutesBeforeStart = Math.round((blockStart.getTime() - checkInTime.getTime()) / 60000);
+if (checkInMinutesBeforeStart >= -5 && checkInMinutesBeforeStart <= 5) {
+  await client.query(`
+    INSERT INTO pizza_points (driver_id, event_type, points, event_time, block_id, claim_id, metadata)
+    VALUES ($1, $2, $3, NOW(), $4, $5, $6)
+  `, [
+    driver_id,
+    'fast_checkin',
+    5,
+    block_id,
+    claim.claim_id,
+    JSON.stringify({
+      check_in_time: checkInTime.toISOString(),
+      block_start_time: blockStart.toISOString(),
+      minutes_difference: checkInMinutesBeforeStart
+    })
+  ]);
+  console.log(`🍕 Awarded 5 PP for fast check-in to driver ${driver_id}`);
+}
+
     res.json({
       success: true,
       check_in_time: checkInTime.toISOString(),
