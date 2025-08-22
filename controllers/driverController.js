@@ -1,4 +1,3 @@
-// FLEX-BACKEND/controllers/driverController.js
 const pool = require('../db');
 
 exports.getDrivers = async (req, res) => {
@@ -116,7 +115,7 @@ exports.getDriverByClerkId = async (req, res) => {
         d.phone_number,
         d.email,
         d.profile_photo_gcs_path,         
-    d.reference_face_photo_gcs_path,  
+        d.reference_face_photo_gcs_path,  
         d.status,
         d.city,
         d.zip_code,
@@ -319,3 +318,129 @@ exports.getNextBlock = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch next block' });
   }
 };
+
+// Dashboard endpoint
+exports.getDriverDashboard = async (req, res) => {
+  try {
+    const { driver_id } = req.params;
+    
+    // Get driver info and level
+    const driverQuery = `
+      SELECT 
+        d.driver_id,
+        d.first_name,
+        d.last_name,
+        d.profile_photo_gcs_path,
+        dl.total_points,
+        dl.level_name,
+        dl.level_number
+      FROM drivers d
+      LEFT JOIN driver_levels dl ON d.driver_id = dl.driver_id
+      WHERE d.driver_id = $1
+    `;
+    
+    const driverResult = await pool.query(driverQuery, [driver_id]);
+    if (driverResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Driver not found' });
+    }
+    
+    const driver = driverResult.rows[0];
+    
+    // Calculate XP progress to next level
+    const levelThresholds = [0, 1000, 2000, 4000, 7000, 10000];
+    const currentThreshold = levelThresholds[driver.level_number - 1] || 0;
+    const nextThreshold = levelThresholds[driver.level_number] || 10000;
+    const xpInCurrentLevel = driver.total_points - currentThreshold;
+    const xpNeededForLevel = nextThreshold - currentThreshold;
+    const xpPercent = Math.round((xpInCurrentLevel / xpNeededForLevel) * 100);
+    
+    // Get badges
+    const badgesQuery = `
+      SELECT 
+        bd.badge_key,
+        bd.badge_name as label,
+        bd.badge_icon_url as icon,
+        CASE WHEN db.id IS NOT NULL THEN true ELSE false END as earned
+      FROM badge_definitions bd
+      LEFT JOIN driver_badges db ON bd.badge_key = db.badge_key AND db.driver_id = $1
+      WHERE bd.is_active = true
+      ORDER BY earned DESC, bd.badge_key
+    `;
+    
+    const badgesResult = await pool.query(badgesQuery, [driver_id]);
+    
+    // Get weekly leaderboard for driver's market
+    const leaderboardQuery = `
+      SELECT 
+        driver_id,
+        full_name as name,
+        weekly_points as weeklyXp,
+        market_rank
+      FROM weekly_leaderboard
+      WHERE market = (SELECT city FROM drivers WHERE driver_id = $1)
+      ORDER BY market_rank
+      LIMIT 10
+    `;
+    
+    const leaderboardResult = await pool.query(leaderboardQuery, [driver_id]);
+    
+    // Get current streak (simplified for now)
+    const streakQuery = `
+      SELECT COUNT(DISTINCT DATE(check_in_time)) as streak_days
+      FROM block_claims
+      WHERE driver_id = $1
+        AND status = 'completed'
+        AND check_in_time >= CURRENT_DATE - INTERVAL '30 days'
+    `;
+    
+    const streakResult = await pool.query(streakQuery, [driver_id]);
+    
+    // Get driver stats
+    const statsQuery = `
+      SELECT 
+        COUNT(DISTINCT bc.block_id) as blocks_completed,
+        COALESCE(
+          ROUND(
+            COUNT(DISTINCT CASE WHEN dl.delivery_completed_at - dl.delivery_started_at <= INTERVAL '30 minutes' THEN dl.delivery_id END) * 100.0 / 
+            NULLIF(COUNT(DISTINCT dl.delivery_id), 0)
+          ), 
+          100
+        ) as on_time_rate
+      FROM drivers d
+      LEFT JOIN block_claims bc ON d.driver_id = bc.driver_id AND bc.status = 'completed'
+      LEFT JOIN delivery_logs dl ON d.driver_id = dl.driver_id
+      WHERE d.driver_id = $1
+    `;
+    
+    const statsResult = await pool.query(statsQuery, [driver_id]);
+    const stats = statsResult.rows[0];
+    
+    res.json({
+      name: driver.first_name,
+      level: driver.level_number || 1,
+      levelName: driver.level_name || 'Rookie Rider',
+      xp: driver.total_points || 0,
+      xpPercent: xpPercent || 0,
+      xpToNextLevel: nextThreshold - (driver.total_points || 0),
+      currentStreak: streakResult.rows[0].streak_days || 0,
+      blocksCompleted: parseInt(stats.blocks_completed) || 0,
+      onTimeRate: parseInt(stats.on_time_rate) || 100,
+      badges: badgesResult.rows.map(b => ({
+        key: b.badge_key,
+        label: b.label,
+        icon: { uri: b.icon || 'https://via.placeholder.com/60' },
+        earned: b.earned
+      })),
+      leaderboard: leaderboardResult.rows.map(l => ({
+        id: l.driver_id,
+        name: l.name,
+        avatar: { uri: `https://ui-avatars.com/api/?name=${encodeURIComponent(l.name)}&size=128` },
+        weeklyXp: l.weeklyXp || 0
+      }))
+    });
+    
+  } catch (error) {
+    console.error('Error fetching dashboard:', error);
+    res.status(500).json({ error: 'Failed to fetch dashboard data' });
+  }
+}; // THIS CLOSING BRACE WAS MISSING!
