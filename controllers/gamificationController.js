@@ -194,43 +194,85 @@ exports.getDriverDashboard = async (req, res) => {
     const xpNeededForLevel = nextThreshold - currentThreshold;
     const xpPercent = Math.round((xpInCurrentLevel / xpNeededForLevel) * 100);
     
-    // Get badges
+    // Get earned badges with full badge definition data
     const badgesQuery = `
       SELECT 
         bd.badge_key,
-        bd.badge_name as label,
-        bd.badge_icon_url as icon,
-        CASE WHEN db.id IS NOT NULL THEN true ELSE false END as earned
-      FROM badge_definitions bd
-      LEFT JOIN driver_badges db ON bd.badge_key = db.badge_key AND db.driver_id = $1
-      WHERE bd.is_active = true
-      ORDER BY earned DESC, bd.badge_key
+        bd.badge_name,
+        bd.badge_description,
+        bd.badge_icon_url,
+        bd.badge_emoji,
+        bd.points_reward,
+        db.earned_at
+      FROM driver_badges db
+      JOIN badge_definitions bd ON db.badge_key = bd.badge_key
+      WHERE db.driver_id = $1 AND bd.is_active = true
+      ORDER BY db.earned_at DESC
     `;
     
     const badgesResult = await pool.query(badgesQuery, [driver_id]);
     
     // Get weekly leaderboard for driver's market
     const leaderboardQuery = `
+      WITH driver_market AS (
+        SELECT city FROM drivers WHERE driver_id = $1
+      ),
+      weekly_points AS (
+        SELECT 
+          d.driver_id,
+          CONCAT(d.first_name, ' ', d.last_name) as driver_name,
+          d.city,
+          COALESCE(SUM(pp.points), 0) as total_points
+        FROM drivers d
+        CROSS JOIN driver_market dm
+        LEFT JOIN pizza_points pp ON d.driver_id = pp.driver_id 
+          AND pp.event_time >= date_trunc('week', CURRENT_DATE)
+        WHERE d.city = dm.city
+        GROUP BY d.driver_id, d.first_name, d.last_name, d.city
+      )
       SELECT 
         driver_id,
-        full_name as name,
-        weekly_points as weeklyXp,
-        market_rank
-      FROM weekly_leaderboard
-      WHERE market = (SELECT city FROM drivers WHERE driver_id = $1)
-      ORDER BY market_rank
+        driver_name,
+        total_points,
+        RANK() OVER (ORDER BY total_points DESC) as rank
+      FROM weekly_points
+      ORDER BY rank
       LIMIT 10
     `;
     
     const leaderboardResult = await pool.query(leaderboardQuery, [driver_id]);
     
-    // Get current streak (simplified for now)
+    // Get current streak
     const streakQuery = `
-      SELECT COUNT(DISTINCT DATE(check_in_time)) as streak_days
-      FROM block_claims
-      WHERE driver_id = $1
-        AND status = 'completed'
-        AND check_in_time >= CURRENT_DATE - INTERVAL '30 days'
+      WITH consecutive_days AS (
+        SELECT 
+          DATE(check_in_time) as work_date,
+          LAG(DATE(check_in_time)) OVER (ORDER BY DATE(check_in_time)) as prev_date
+        FROM block_claims
+        WHERE driver_id = $1
+          AND status = 'completed'
+          AND check_in_time >= CURRENT_DATE - INTERVAL '30 days'
+        GROUP BY DATE(check_in_time)
+      ),
+      streak_groups AS (
+        SELECT 
+          work_date,
+          SUM(CASE WHEN work_date - prev_date > 1 OR prev_date IS NULL THEN 1 ELSE 0 END) 
+            OVER (ORDER BY work_date) as streak_group
+        FROM consecutive_days
+      ),
+      current_streak AS (
+        SELECT 
+          COUNT(*) as streak_days
+        FROM streak_groups
+        WHERE streak_group = (
+          SELECT streak_group 
+          FROM streak_groups 
+          WHERE work_date = CURRENT_DATE
+          LIMIT 1
+        )
+      )
+      SELECT COALESCE(MAX(streak_days), 0) as streak_days FROM current_streak
     `;
     
     const streakResult = await pool.query(streakQuery, [driver_id]);
@@ -257,26 +299,16 @@ exports.getDriverDashboard = async (req, res) => {
     
     res.json({
       name: driver.first_name,
-      level: driver.level_number,
-      levelName: driver.level_name,
+      level: driver.level_number || 1,
+      levelName: driver.level_name || 'Rookie Rider',
       xp: driver.total_points || 0,
       xpPercent: xpPercent,
-      xpToNextLevel: nextThreshold - driver.total_points,
-      currentStreak: streakResult.rows[0].streak_days || 0,
+      xpToNextLevel: nextThreshold - (driver.total_points || 0),
+      currentStreak: parseInt(streakResult.rows[0].streak_days) || 0,
       blocksCompleted: parseInt(stats.blocks_completed) || 0,
       onTimeRate: parseInt(stats.on_time_rate) || 100,
-      badges: badgesResult.rows.map(b => ({
-        key: b.badge_key,
-        label: b.label,
-        icon: { uri: b.icon || 'https://via.placeholder.com/60' },
-        earned: b.earned
-      })),
-      leaderboard: leaderboardResult.rows.map(l => ({
-        id: l.driver_id,
-        name: l.name,
-        avatar: { uri: `https://ui-avatars.com/api/?name=${encodeURIComponent(l.name)}&size=128` },
-        weeklyXp: l.weeklyXp || 0
-      }))
+      badges: badgesResult.rows,  // Return raw badge data with all fields
+      leaderboard: leaderboardResult.rows  // Return raw leaderboard data
     });
     
   } catch (error) {
@@ -285,8 +317,78 @@ exports.getDriverDashboard = async (req, res) => {
   }
 };
 
+// Get driver points history
+exports.getPointsHistory = async (req, res) => {
+  try {
+    const { driver_id } = req.params;
+    const limit = parseInt(req.query.limit) || 50;
+    
+    const query = `
+      SELECT 
+        pp.id,
+        pp.event_type,
+        pp.points,
+        pp.event_time,
+        pp.metadata,
+        CASE 
+          WHEN pp.event_type = 'block_completion' THEN 'Block Completed'
+          WHEN pp.event_type = 'manager_rating_5' THEN '5-Star Manager Rating'
+          WHEN pp.event_type = 'badge_earned' THEN CONCAT('Badge Earned: ', (pp.metadata->>'badge_name')::text)
+          WHEN pp.event_type = 'streak_bonus' THEN CONCAT('Streak Bonus: Day ', (pp.metadata->>'streak_day')::text)
+          ELSE pp.event_type
+        END as description
+      FROM pizza_points pp
+      WHERE pp.driver_id = $1
+      ORDER BY pp.event_time DESC
+      LIMIT $2
+    `;
+    
+    const result = await pool.query(query, [driver_id, limit]);
+    
+    res.json({
+      points_history: result.rows
+    });
+    
+  } catch (error) {
+    console.error('Error fetching points history:', error);
+    res.status(500).json({ error: 'Failed to fetch points history' });
+  }
+};
+
+// Get all available badges
+exports.getAllBadges = async (req, res) => {
+  try {
+    const query = `
+      SELECT 
+        badge_key,
+        badge_name,
+        badge_description,
+        badge_icon_url,
+        badge_emoji,
+        points_reward,
+        unlock_criteria_type,
+        unlock_criteria_value
+      FROM badge_definitions
+      WHERE is_active = true
+      ORDER BY points_reward ASC
+    `;
+    
+    const result = await pool.query(query);
+    
+    res.json({
+      badges: result.rows
+    });
+    
+  } catch (error) {
+    console.error('Error fetching badges:', error);
+    res.status(500).json({ error: 'Failed to fetch badges' });
+  }
+};
+
 module.exports = {
   checkAndAwardBadges,
   submitManagerRating,
-  getDriverDashboard
+  getDriverDashboard,
+  getPointsHistory,
+  getAllBadges
 };
