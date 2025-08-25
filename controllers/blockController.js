@@ -1010,6 +1010,49 @@ Return ONLY JSON in this exact format:
   }
 }
 
+
+// API endpoint for getting directions
+exports.getDirections = async (req, res) => {
+  const { origin, destination } = req.query;
+
+  if (!origin || !destination) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Missing origin or destination' 
+    });
+  }
+
+  try {
+    console.log('🗺️ Getting directions from', origin, 'to', destination);
+    
+    const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&departure_time=now&key=${process.env.GOOGLE_MAPS_API_KEY}`;
+    
+    const response = await axios.get(url);
+    
+    if (response.data.status === 'OK') {
+      res.json({
+        success: true,
+        status: response.data.status,
+        routes: response.data.routes
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        status: response.data.status,
+        error_message: response.data.error_message
+      });
+    }
+  } catch (error) {
+    console.error('❌ Directions API error:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch directions',
+      error: error.message
+    });
+  }
+};
+
+
 // Check-in for a block with face verification
 // Replace the ENTIRE checkInBlock function with this fixed version:
 
@@ -1200,6 +1243,7 @@ exports.checkInBlock = async (req, res) => {
       faceVerified,
       confidence: verificationConfidence
     });
+
 
     // Award Pizza Points for fast check-in (within 5 minutes of block start)
 const checkInMinutesBeforeStart = Math.round((blockStart.getTime() - checkInTime.getTime()) / 60000);

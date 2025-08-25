@@ -26,4 +26,6 @@ router.post('/blocks/:block_id/check-in/face', blockController.uploadCheckInFace
 
 router.get('/blocks/:id/details', blockController.getBlockDetails);
 
+router.get('/directions', blockController.getDirections);
+
 module.exports = router;
