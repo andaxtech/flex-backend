@@ -57,6 +57,9 @@ function initializeWebSocket(server) {
     
     // Join general blocks room
     socket.join('available-blocks');
+    
+    // Join schedule-specific room
+    socket.join(`driver-${driverId}-schedule`);
 
     // Send initial connection confirmation
     socket.emit('connected', {
@@ -130,6 +133,44 @@ function initializeWebSocket(server) {
     });
   };
 
+  // Schedule-specific event emitters
+  const emitScheduleUpdated = (driverId, blockId, changes) => {
+    io.to(`driver-${driverId}-schedule`).emit('schedule-updated', {
+      blockId: blockId,
+      changes: changes,
+      timestamp: new Date().toISOString()
+    });
+  };
+
+  const emitBlockCancelled = (driverId, blockId, reason) => {
+    // Notify the specific driver
+    io.to(`driver-${driverId}-schedule`).emit('block-cancelled', {
+      blockId: blockId,
+      reason: reason,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Also notify all drivers that this block is available again
+    emitBlockReleased(blockId);
+  };
+
+  const emitBlockModified = (driverId, blockId, modifications) => {
+    io.to(`driver-${driverId}-schedule`).emit('block-modified', {
+      blockId: blockId,
+      modifications: modifications,
+      timestamp: new Date().toISOString()
+    });
+  };
+
+  const emitCheckInStatusChanged = (driverId, blockId, status, claimId) => {
+    io.to(`driver-${driverId}-schedule`).emit('check-in-status-changed', {
+      blockId: blockId,
+      claimId: claimId,
+      status: status,
+      timestamp: new Date().toISOString()
+    });
+  };
+
   // Get connection stats
   const getConnectionStats = () => {
     return {
@@ -149,6 +190,10 @@ function initializeWebSocket(server) {
     emitBlockClaimed,
     emitBlockReleased,
     emitNewBlockAvailable,
+    emitScheduleUpdated,
+    emitBlockCancelled,
+    emitBlockModified,
+    emitCheckInStatusChanged,
     getConnectionStats
   };
 }
