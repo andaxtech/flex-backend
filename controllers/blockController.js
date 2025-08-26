@@ -173,6 +173,12 @@ exports.claimBlock = async (req, res) => {
       global.socketIO.emitBlockClaimed(block_id, driver_id);
       console.log(`🔌 Emitted block-claimed event for block ${block_id}`);
     }
+
+    // WEBSOCKET: Emit schedule update for the driver who claimed
+if (global.socketIO && global.socketIO.emitScheduleUpdated) {
+  global.socketIO.emitScheduleUpdated(driver_id, block_id, { action: 'claimed' });
+  console.log(`🔌 Emitted schedule-updated event for driver ${driver_id}`);
+}
     
     res.status(201).json({ 
       success: true, 
@@ -379,6 +385,12 @@ exports.unclaimBlock = async (req, res) => {
       global.socketIO.emitBlockReleased(block_id);
       console.log(`🔌 Emitted block-released event for block ${block_id}`);
     }
+
+    // WEBSOCKET: Emit schedule-specific event for the driver who unclaimed
+if (global.socketIO && global.socketIO.emitBlockCancelled) {
+  global.socketIO.emitBlockCancelled(driver_id, block_id, 'Driver unclaimed block');
+  console.log(`🔌 Emitted block-cancelled event for driver ${driver_id}`);
+}
     
     res.status(200).json({ 
       success: true,
@@ -1243,6 +1255,17 @@ exports.checkInBlock = async (req, res) => {
       faceVerified,
       confidence: verificationConfidence
     });
+
+    // WEBSOCKET: Emit check-in status change
+if (global.socketIO && global.socketIO.emitCheckInStatusChanged) {
+  global.socketIO.emitCheckInStatusChanged(
+    driver_id, 
+    block_id, 
+    'checked_in', 
+    claim.claim_id
+  );
+  console.log(`🔌 Emitted check-in-status-changed event for driver ${driver_id}`);
+}
 
 
     // Award Pizza Points for fast check-in (within 5 minutes of block start)

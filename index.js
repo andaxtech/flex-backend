@@ -27,6 +27,10 @@ const {
   emitBlockClaimed, 
   emitBlockReleased, 
   emitNewBlockAvailable,
+  emitScheduleUpdated,
+  emitBlockCancelled,
+  emitBlockModified,
+  emitCheckInStatusChanged,
   getConnectionStats 
 } = initializeWebSocket(server);
 
@@ -35,7 +39,11 @@ global.socketIO = {
   io,
   emitBlockClaimed,
   emitBlockReleased,
-  emitNewBlockAvailable
+  emitNewBlockAvailable,
+  emitScheduleUpdated,
+  emitBlockCancelled,
+  emitBlockModified,
+  emitCheckInStatusChanged
 };
 
 // Middleware
