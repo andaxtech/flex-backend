@@ -1,3 +1,24 @@
+
+//Add GCS download functionality
+const { Storage } = require('@google-cloud/storage');
+const storage = new Storage();
+const bucketName = process.env.GCS_BUCKET_NAME || 'your-actual-bucket-name';
+
+async function getGCSImageUrl(gcsPath) {
+  try {
+    const file = storage.bucket(bucketName).file(gcsPath);
+    const [url] = await file.getSignedUrl({
+      version: 'v4',
+      action: 'read',
+      expires: Date.now() + 15 * 60 * 1000, // 15 minutes
+    });
+    return url;
+  } catch (error) {
+    console.error('Error getting GCS signed URL:', error);
+    throw new Error('Failed to retrieve reference photo');
+  }
+}
+
 // FLEX-BACKEND/controllers/blockController.js
 const pool = require('../db');
 
@@ -1102,7 +1123,7 @@ exports.checkInBlock = async (req, res) => {
         l.store_latitude,
         l.store_longitude,
         l.time_zone_code,
-        d.reference_face_photo_url,
+        d.reference_face_photo_gcs_path,
         d.first_name,
         d.last_name
       FROM block_claims bc
@@ -1426,7 +1447,7 @@ exports.uploadDriverReferencePhoto = async (req, res) => {
 
     // Update driver's reference photo
     const result = await pool.query(
-      'UPDATE drivers SET reference_face_photo_url = $1, reference_face_uploaded_at = NOW() WHERE driver_id = $2 RETURNING driver_id, first_name, last_name',
+      'UPDATE drivers SET reference_face_photo_gcs_path = $1, reference_face_uploaded_at = NOW() WHERE driver_id = $2',
       [photoUrl, driver_id]
     );
 
@@ -1434,7 +1455,12 @@ exports.uploadDriverReferencePhoto = async (req, res) => {
       throw new Error('Driver not found');
     }
 
-    const driver = result.rows[0];
+    // Need to fetch the driver data since UPDATE doesn't return it by default
+const driverResult = await pool.query(
+  'SELECT driver_id, first_name, last_name FROM drivers WHERE driver_id = $1',
+  [driver_id]
+);
+const driver = driverResult.rows[0];
 
     console.log(`✅ Reference photo uploaded for driver ${driver_id} (${driver.first_name} ${driver.last_name})`);
 
@@ -1493,7 +1519,7 @@ exports.uploadCheckInFace = async (req, res) => {
       SELECT 
         bc.claim_id,
         bc.status as claim_status,
-        d.reference_face_photo_url,
+        d.reference_face_photo_gcs_path,
         d.first_name,
         d.last_name
       FROM block_claims bc
@@ -1511,7 +1537,7 @@ exports.uploadCheckInFace = async (req, res) => {
     const driver = {
       first_name: claim.first_name,
       last_name: claim.last_name,
-      reference_face_photo_url: claim.reference_face_photo_url
+      reference_face_photo_gcs_path: claim.reference_face_photo_gcs_path
     };
 
     // Check previous attempts
@@ -1548,9 +1574,9 @@ exports.uploadCheckInFace = async (req, res) => {
     console.log('✅ Face photo uploaded to Cloudinary:', facePhotoUrl);
 
     // If no reference photo, this becomes the reference
-    if (!driver.reference_face_photo_url) {
+    if (!driver.reference_face_photo_gcs_path) {
       await client.query(
-        'UPDATE drivers SET reference_face_photo_url = $1, reference_face_uploaded_at = NOW() WHERE driver_id = $2',
+        'UPDATE drivers SET reference_face_photo_gcs_path = $1, reference_face_uploaded_at = NOW() WHERE driver_id = $2',
         [facePhotoUrl, driver_id]
       );
       
@@ -1588,11 +1614,14 @@ exports.uploadCheckInFace = async (req, res) => {
     console.log('🔍 Comparing faces with OpenAI Vision API...');
     
     try {
-      const comparisonResult = await compareFaces(
-        driver.reference_face_photo_url, 
-        facePhotoUrl,
-        true // Enable liveness detection
-      );
+      // Get signed URL for the GCS reference photo
+const referencePhotoUrl = await getGCSImageUrl(driver.reference_face_photo_gcs_path);
+
+const comparisonResult = await compareFaces(
+  referencePhotoUrl, 
+  facePhotoUrl,
+  true // Enable liveness detection
+);
       
       console.log('📊 Face comparison result:', {
         isMatch: comparisonResult.isMatch,
@@ -1677,7 +1706,7 @@ exports.uploadCheckInFace = async (req, res) => {
         face_photo_url: facePhotoUrl,
         verified: true,
         confidence: comparisonResult.confidence,
-        reference_photo_url: driver.reference_face_photo_url,
+        reference_photo_url: driver.reference_face_photo_gcs_path,
         driver_name: `${driver.first_name} ${driver.last_name}`,
         message: 'Face verified successfully'
       });
