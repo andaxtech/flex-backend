@@ -1,11 +1,55 @@
 
 //Add GCS download functionality
 const { Storage } = require('@google-cloud/storage');
-const storage = new Storage();
-const bucketName = process.env.GCS_BUCKET_NAME || 'your-actual-bucket-name';
+
+// Delay initialization until first use
+let storage = null;
+let bucketName = null;
+let storageInitialized = false;
+
+// Initialize storage on first use
+function initializeStorage() {
+  if (storageInitialized) return;
+  
+  try {
+    if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+      // Parse the JSON string from Railway environment variable
+      const credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+      storage = new Storage({
+        projectId: process.env.GCS_PROJECT_ID,
+        credentials: credentials
+      });
+      console.log('✅ GCS initialized with Railway JSON credentials');
+    } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+      // Fallback to file path for local development
+      storage = new Storage({
+        projectId: process.env.GCS_PROJECT_ID,
+        keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS
+      });
+      console.log('✅ GCS initialized with local file credentials');
+    } else {
+      throw new Error('No GCS credentials configured (neither GOOGLE_APPLICATION_CREDENTIALS_JSON nor GOOGLE_APPLICATION_CREDENTIALS)');
+    }
+    
+    bucketName = process.env.GCS_BUCKET_NAME;
+    if (!bucketName) {
+      throw new Error('GCS_BUCKET_NAME not configured');
+    }
+    
+    storageInitialized = true;
+  } catch (error) {
+    console.error('❌ Failed to initialize GCS:', error.message);
+    throw error;
+  }
+}
 
 async function getGCSImageUrl(gcsPath) {
   try {
+    // Initialize storage on first use
+    if (!storageInitialized) {
+      initializeStorage();
+    }
+    
     const file = storage.bucket(bucketName).file(gcsPath);
     const [url] = await file.getSignedUrl({
       version: 'v4',
