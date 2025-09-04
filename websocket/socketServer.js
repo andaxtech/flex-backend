@@ -97,7 +97,38 @@ function initializeWebSocket(server) {
     socket.on('error', (error) => {
       console.error(`Socket error for driver ${driverId}:`, error);
     });
+
+    // Handle location updates from driver
+    socket.on('location-update', (data) => {
+      const { claimId, blockId, location } = data;
+      
+      // Emit to managers watching this block/claim
+      io.to(`block-${blockId}-tracking`).emit('driver-location', {
+        driverId: driverId,
+        claimId: claimId,
+        blockId: blockId,
+        location: location,
+        timestamp: new Date().toISOString()
+      });
+      
+      console.log(`📍 Location update from driver ${driverId} for block ${blockId}`);
+    });
+
+    // Handle manager joining block tracking room
+    socket.on('track-block', (data) => {
+      const { blockId } = data;
+      socket.join(`block-${blockId}-tracking`);
+      console.log(`👁️ Manager joined tracking for block ${blockId}`);
+    });
+
+    // Handle manager leaving block tracking room
+    socket.on('untrack-block', (data) => {
+      const { blockId } = data;
+      socket.leave(`block-${blockId}-tracking`);
+      console.log(`👁️ Manager left tracking for block ${blockId}`);
+    });
   });
+  
 
   // Utility functions to emit events
   const emitToAllDrivers = (event, data) => {
