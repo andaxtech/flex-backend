@@ -320,19 +320,19 @@ exports.getDeliveryLogs = async (req, res) => {
     let paramIndex = 1;
     
     if (driver_id) {
-      query += ` AND driver_id = ${paramIndex}`;
+      query += ` AND driver_id = $${paramIndex}`;
       params.push(driver_id);
       paramIndex++;
     }
     
     if (claim_id) {
-      query += ` AND claim_id = ${paramIndex}`;
+      query += ` AND claim_id = $${paramIndex}`;
       params.push(claim_id);
       paramIndex++;
     }
     
     if (block_id) {
-      query += ` AND block_id = ${paramIndex}`;
+      query += ` AND block_id = $${paramIndex}`;
       params.push(block_id);
       paramIndex++;
     }
