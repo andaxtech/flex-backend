@@ -126,6 +126,13 @@ exports.completeDelivery = async (req, res) => {
     await client.query('BEGIN');
     
     const deliveryLogId = parseInt(req.params.deliveryLogId);
+
+if (isNaN(deliveryLogId)) {
+  return res.status(400).json({ 
+    success: false, 
+    error: 'Invalid delivery ID provided' 
+  });
+}
     const { completed_at, device_local_time } = req.body;
     
     // Update the delivery log with all completion timestamps
@@ -188,7 +195,7 @@ exports.completeDelivery = async (req, res) => {
       completedDelivery.driver_id,
       eventType,
       pizzaPoints,
-      deliveryLogId,
+      completedDelivery.delivery_id,
       completedDelivery.block_id,
       completedDelivery.claim_id,
       JSON.stringify({
