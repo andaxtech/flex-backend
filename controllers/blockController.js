@@ -1883,3 +1883,67 @@ exports.getBlockDetails = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch block details' });
   }
 };
+
+// Check out from a block
+exports.checkOutBlock = async (req, res) => {
+  const { claim_id, checkout_type, checkout_time_utc, device_local_time, ...additionalData } = req.body;
+
+  if (!claim_id) {
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Missing claim_id' 
+    });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // Update the block claim with checkout time
+    const updateQuery = `
+      UPDATE block_claims 
+      SET 
+        checkout_time = $1,
+        service_status = 'completed',
+        checkout_type = $2
+      WHERE claim_id = $3
+      RETURNING *
+    `;
+
+    const result = await client.query(updateQuery, [
+      checkout_time_utc || new Date().toISOString(),
+      checkout_type || 'normal',
+      claim_id
+    ]);
+
+    if (result.rowCount === 0) {
+      throw new Error('Claim not found');
+    }
+
+    await client.query('COMMIT');
+
+    console.log(`✅ Driver checked out from claim ${claim_id}`);
+
+    res.json({
+      success: true,
+      message: 'Check-out successful',
+      checkout_time: result.rows[0].checkout_time,
+      details: {
+        claim_id: claim_id,
+        checkout_type: checkout_type,
+        ...additionalData
+      }
+    });
+
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('❌ Check-out error:', err.message);
+    res.status(400).json({ 
+      success: false, 
+      error: err.message 
+    });
+  } finally {
+    client.release();
+  }
+};

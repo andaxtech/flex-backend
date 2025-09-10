@@ -9,6 +9,8 @@ router.post('/claim', blockController.claimBlock);
 router.post('/unclaim', blockController.unclaimBlock);
 // Removed: router.post('/update-expired', blockController.updateExpiredBlocks);
 
+router.post('/blocks/checkout', blockController.checkOutBlock);
+
 // In your routes file (likely routes/blocks.js or routes/index.js)
 const { upload } = require('../config/cloudinary');
 
