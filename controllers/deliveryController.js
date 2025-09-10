@@ -136,7 +136,7 @@ exports.completeDelivery = async (req, res) => {
         completed_at = $2,
         device_completed_time = $3,
         delivery_status = 'completed'
-      WHERE delivery_log_id = $1
+      WHERE delivery_id = $1
       RETURNING *
     `;
     
@@ -267,7 +267,7 @@ exports.completeDelivery = async (req, res) => {
     res.json({
       success: true,
       delivery: {
-        delivery_log_id: completedDelivery.delivery_log_id,
+        delivery_log_id: completedDelivery.delivery_id,
         driver_id: completedDelivery.driver_id,
         order_number: completedDelivery.order_number,
         order_total: parseFloat(completedDelivery.order_total || 0),
