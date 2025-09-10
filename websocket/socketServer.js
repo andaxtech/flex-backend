@@ -20,13 +20,26 @@ function initializeWebSocket(server) {
   });
 
   // Authentication middleware
+  // Authentication middleware
   io.use(async (socket, next) => {
     try {
       const token = socket.handshake.auth.token;
       const driverId = socket.handshake.auth.driverId;
+      const managerId = socket.handshake.auth.managerId;
+      const role = socket.handshake.auth.role;
       
-      if (!driverId) {
-        return next(new Error('Authentication failed: No driver ID'));
+      if (role === 'manager' && managerId) {
+        socket.managerId = parseInt(managerId);
+        socket.userType = 'manager';
+        console.log(`🔌 Manager ${managerId} authenticating...`);
+        next();
+      } else if (driverId) {
+        socket.driverId = parseInt(driverId);
+        socket.userType = 'driver';
+        console.log(`🔌 Driver ${driverId} authenticating...`);
+        next();
+      } else {
+        return next(new Error('Authentication failed: No valid ID provided'));
       }
 
       // If you're using JWT, verify it here
@@ -42,6 +55,31 @@ function initializeWebSocket(server) {
   });
 
   io.on('connection', (socket) => {
+    if (socket.userType === 'manager') {
+      const managerId = socket.managerId;
+      console.log(`✅ Manager ${managerId} connected (socket: ${socket.id})`);
+      
+      // Manager-specific handlers
+      socket.on('track-block', (data) => {
+        const { blockId } = data;
+        socket.join(`block-${blockId}-tracking`);
+        console.log(`👁️ Manager ${managerId} joined tracking for block ${blockId}`);
+      });
+
+      socket.on('untrack-block', (data) => {
+        const { blockId } = data;
+        socket.leave(`block-${blockId}-tracking`);
+        console.log(`👁️ Manager ${managerId} left tracking for block ${blockId}`);
+      });
+
+      socket.on('disconnect', () => {
+        console.log(`❌ Manager ${managerId} disconnected (socket: ${socket.id})`);
+      });
+      
+      return; // Exit here for managers
+    }
+    
+    // Original driver code continues here
     const driverId = socket.driverId;
     console.log(`✅ Driver ${driverId} connected (socket: ${socket.id})`);
 
@@ -114,19 +152,7 @@ function initializeWebSocket(server) {
       console.log(`📍 Location update from driver ${driverId} for block ${blockId}`);
     });
 
-    // Handle manager joining block tracking room
-    socket.on('track-block', (data) => {
-      const { blockId } = data;
-      socket.join(`block-${blockId}-tracking`);
-      console.log(`👁️ Manager joined tracking for block ${blockId}`);
-    });
-
-    // Handle manager leaving block tracking room
-    socket.on('untrack-block', (data) => {
-      const { blockId } = data;
-      socket.leave(`block-${blockId}-tracking`);
-      console.log(`👁️ Manager left tracking for block ${blockId}`);
-    });
+   
   });
   
 
