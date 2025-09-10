@@ -1904,16 +1904,14 @@ exports.checkOutBlock = async (req, res) => {
     const updateQuery = `
       UPDATE block_claims 
       SET 
-        checkout_time = $1,
-        service_status = 'completed',
-        checkout_type = $2
-      WHERE claim_id = $3
+        check_out_time = $1,
+        service_status = 'completed'
+      WHERE claim_id = $2
       RETURNING *
     `;
 
     const result = await client.query(updateQuery, [
       checkout_time_utc || new Date().toISOString(),
-      checkout_type || 'normal',
       claim_id
     ]);
 
@@ -1928,7 +1926,7 @@ exports.checkOutBlock = async (req, res) => {
     res.json({
       success: true,
       message: 'Check-out successful',
-      checkout_time: result.rows[0].checkout_time,
+      checkout_time: result.rows[0].check_out_time,
       details: {
         claim_id: claim_id,
         checkout_type: checkout_type,
